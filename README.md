@@ -83,6 +83,90 @@ cargo add ruvector-raft ruvector-cluster ruvector-replication
 | **Tiny Dancer** | FastGRNN neural inference | Optimize LLM inference costs |
 | **Adaptive Routing** | Learn optimal routing strategies | Minimize latency, maximize accuracy |
 
+### Attention Mechanisms (`@ruvector/attention`)
+
+High-performance attention mechanisms for transformers, graph neural networks, and hyperbolic embeddings. Native Rust with NAPI-RS bindings for maximum performance.
+
+> **Documentation**: [Attention Module Docs](./npm/packages/ruvector-attention/README.md) | [API Reference](./crates/ruvector-attention/README.md)
+
+#### Core Attention Mechanisms
+
+| Mechanism | Complexity | Memory | Best For |
+|-----------|------------|--------|----------|
+| **DotProductAttention** | O(n²) | O(n²) | Standard transformer attention, general purpose |
+| **MultiHeadAttention** | O(n²·h) | O(n²·h) | Transformers, parallel attention heads, BERT/GPT |
+| **FlashAttention** | O(n²) | O(n) | Long sequences, memory-constrained environments |
+| **LinearAttention** | O(n·d) | O(n·d) | Very long sequences (>8K tokens), streaming |
+| **HyperbolicAttention** | O(n²) | O(n²) | Hierarchical data, taxonomies, tree structures |
+| **MoEAttention** | O(n·k) | O(n·k) | Mixture of Experts, sparse routing, large models |
+
+#### Graph Attention Mechanisms
+
+| Mechanism | Complexity | Best For |
+|-----------|------------|----------|
+| **GraphRoPeAttention** | O(n²) | Graph transformers with rotary position embeddings |
+| **EdgeFeaturedAttention** | O(n²·e) | Molecular graphs, knowledge graphs with edge attributes |
+| **DualSpaceAttention** | O(n²) | Combined Euclidean + hyperbolic embeddings |
+| **LocalGlobalAttention** | O(n·k + n) | Large-scale graphs (>100K nodes), scalable GNNs |
+
+#### Specialized Mechanisms
+
+| Mechanism | Type | Best For |
+|-----------|------|----------|
+| **SparseAttention** | Efficiency | Very long documents, memory-limited inference |
+| **CrossAttention** | Multi-modal | Vision-language models, encoder-decoder |
+| **NeighborhoodAttention** | Graph | Local graph neighborhoods, message passing |
+| **HierarchicalAttention** | Structure | Document hierarchies, multi-level attention |
+
+#### Hyperbolic Math Functions
+
+For working with hyperbolic embeddings (Poincaré ball model):
+
+| Function | Description | Use Case |
+|----------|-------------|----------|
+| `expMap(v, c)` | Tangent space → Poincaré ball | Embedding initialization |
+| `logMap(p, c)` | Poincaré ball → Tangent space | Gradient computation |
+| `mobiusAddition(x, y, c)` | Hyperbolic vector addition | Feature aggregation |
+| `poincareDistance(x, y, c)` | Hyperbolic distance metric | Similarity computation |
+| `projectToPoincareBall(p, c)` | Project to valid ball region | Numerical stability |
+
+#### Async & Batch Operations
+
+| Operation | Description | Performance |
+|-----------|-------------|-------------|
+| `asyncBatchCompute()` | Parallel batch processing | 3-5x speedup |
+| `streamingAttention()` | Chunk-based streaming | Constant memory |
+| `HardNegativeMiner` | Contrastive learning | Semi-hard/hard mining |
+| `AttentionCache` | KV-cache for inference | 10x faster generation |
+
+```bash
+# Install attention module
+npm install @ruvector/attention
+
+# CLI commands
+npx ruvector attention list                    # List all 39 mechanisms
+npx ruvector attention info flash              # Details on FlashAttention
+npx ruvector attention benchmark               # Performance comparison
+npx ruvector attention compute -t dot -d 128   # Run attention computation
+npx ruvector attention hyperbolic -a distance -v "[0.1,0.2]" -b "[0.3,0.4]"
+```
+
+```javascript
+// JavaScript API
+const { FlashAttention, HyperbolicAttention, poincareDistance } = require('@ruvector/attention');
+
+// Flash attention for long sequences
+const flash = new FlashAttention(512, 64);  // dim=512, block_size=64
+const output = flash.compute(query, keys, values);
+
+// Hyperbolic attention for hierarchical data
+const hyper = new HyperbolicAttention(256, 1.0);  // dim=256, curvature=1.0
+const result = hyper.compute(query, keys, values);
+
+// Hyperbolic distance
+const dist = poincareDistance(new Float32Array([0.1, 0.2]), new Float32Array([0.3, 0.4]), 1.0);
+```
+
 ### Deployment
 
 | Feature | What It Does | Why It Matters |
@@ -245,6 +329,13 @@ All crates are published to [crates.io](https://crates.io) under the `ruvector-*
 | [ruvector-gnn-node](./crates/ruvector-gnn-node) | Node.js bindings for GNN inference | [![crates.io](https://img.shields.io/crates/v/ruvector-gnn-node.svg)](https://crates.io/crates/ruvector-gnn-node) |
 | [ruvector-gnn-wasm](./crates/ruvector-gnn-wasm) | WASM bindings for browser GNN | [![crates.io](https://img.shields.io/crates/v/ruvector-gnn-wasm.svg)](https://crates.io/crates/ruvector-gnn-wasm) |
 
+### Attention Mechanisms
+
+| Crate | Description | crates.io |
+|-------|-------------|-----------|
+| [ruvector-attention](./crates/ruvector-attention) | 39 attention mechanisms (Flash, Hyperbolic, MoE, Graph) | [![crates.io](https://img.shields.io/crates/v/ruvector-attention.svg)](https://crates.io/crates/ruvector-attention) |
+| [ruvector-attention-wasm](./crates/ruvector-attention-wasm) | WASM bindings for browser attention | [![crates.io](https://img.shields.io/crates/v/ruvector-attention-wasm.svg)](https://crates.io/crates/ruvector-attention-wasm) |
+
 ### Distributed Systems
 
 | Crate | Description | crates.io |
@@ -350,22 +441,37 @@ async fn main() -> anyhow::Result<()> {
 | [@ruvector/tiny-dancer](https://www.npmjs.com/package/@ruvector/tiny-dancer) | FastGRNN neural inference for AI agent routing | [![npm](https://img.shields.io/npm/v/@ruvector/tiny-dancer.svg)](https://www.npmjs.com/package/@ruvector/tiny-dancer) |
 | [@ruvector/router](https://www.npmjs.com/package/@ruvector/router) | Semantic router with HNSW vector search | [![npm](https://img.shields.io/npm/v/@ruvector/router.svg)](https://www.npmjs.com/package/@ruvector/router) |
 | [@ruvector/agentic-synth](https://www.npmjs.com/package/@ruvector/agentic-synth) | Synthetic data generator for AI/ML | [![npm](https://img.shields.io/npm/v/@ruvector/agentic-synth.svg)](https://www.npmjs.com/package/@ruvector/agentic-synth) |
+| [@ruvector/attention](https://www.npmjs.com/package/@ruvector/attention) | 39 attention mechanisms for transformers & GNNs | [![npm](https://img.shields.io/npm/v/@ruvector/attention.svg)](https://www.npmjs.com/package/@ruvector/attention) |
 
 **Platform-specific native bindings** (auto-detected):
 - `@ruvector/node-linux-x64-gnu`, `@ruvector/node-linux-arm64-gnu`, `@ruvector/node-darwin-x64`, `@ruvector/node-darwin-arm64`, `@ruvector/node-win32-x64-msvc`
 - `@ruvector/gnn-linux-x64-gnu`, `@ruvector/gnn-linux-arm64-gnu`, `@ruvector/gnn-darwin-x64`, `@ruvector/gnn-darwin-arm64`, `@ruvector/gnn-win32-x64-msvc`
 - `@ruvector/tiny-dancer-linux-x64-gnu`, `@ruvector/tiny-dancer-linux-arm64-gnu`, `@ruvector/tiny-dancer-darwin-x64`, `@ruvector/tiny-dancer-darwin-arm64`, `@ruvector/tiny-dancer-win32-x64-msvc`
 - `@ruvector/router-linux-x64-gnu`, `@ruvector/router-linux-arm64-gnu`, `@ruvector/router-darwin-x64`, `@ruvector/router-darwin-arm64`, `@ruvector/router-win32-x64-msvc`
+- `@ruvector/attention-linux-x64-gnu`, `@ruvector/attention-linux-arm64-gnu`, `@ruvector/attention-darwin-x64`, `@ruvector/attention-darwin-arm64`, `@ruvector/attention-win32-x64-msvc`
 
-#### 🚧 Coming Soon
+#### 🔧 Ready to Publish (Crates Built)
+
+These packages have Rust crates ready and can be published on request:
+
+| Package | Description | Rust Crate | Status |
+|---------|-------------|------------|--------|
+| @ruvector/wasm | WASM fallback for core vector DB | `ruvector-wasm` | ✅ Built |
+| @ruvector/gnn-wasm | WASM fallback for GNN layers | `ruvector-gnn-wasm` | ✅ Built |
+| @ruvector/graph-wasm | WASM fallback for graph DB | `ruvector-graph-wasm` | ✅ Built |
+| @ruvector/attention-wasm | WASM fallback for attention | `ruvector-attention-wasm` | ✅ Built |
+| @ruvector/tiny-dancer-wasm | WASM fallback for AI routing | `ruvector-tiny-dancer-wasm` | ✅ Built |
+| @ruvector/router-wasm | WASM fallback for semantic router | `ruvector-router-wasm` | ✅ Built |
+| @ruvector/cluster | Distributed clustering & sharding | `ruvector-cluster` | ✅ Built |
+| @ruvector/server | HTTP/gRPC server mode | `ruvector-server` | ✅ Built |
+
+#### 🚧 Planned
 
 | Package | Description | Status |
 |---------|-------------|--------|
-| @ruvector/wasm | WASM fallback for core vector DB | Crate ready |
-| @ruvector/gnn-wasm | WASM fallback for GNN | Crate ready |
-| @ruvector/graph-wasm | WASM fallback for graph DB | Crate ready |
-| @ruvector/cluster | Distributed clustering | Crate ready |
-| @ruvector/server | HTTP/gRPC server mode | Crate ready |
+| @ruvector/raft | Raft consensus for distributed ops | Crate ready |
+| @ruvector/replication | Multi-master replication | Crate ready |
+| @ruvector/scipix | Scientific OCR (LaTeX/MathML) | Crate ready |
 
 See [GitHub Issue #20](https://github.com/ruvnet/ruvector/issues/20) for multi-platform npm package roadmap.
 

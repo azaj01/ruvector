@@ -47,6 +47,46 @@ try {
   // GNN not available - commands will show helpful message
 }
 
+// Import Attention (optional - graceful fallback if not available)
+let DotProductAttention, MultiHeadAttention, HyperbolicAttention, FlashAttention, LinearAttention, MoEAttention;
+let GraphRoPeAttention, EdgeFeaturedAttention, DualSpaceAttention, LocalGlobalAttention;
+let benchmarkAttention, computeAttentionAsync, batchAttentionCompute, parallelAttentionCompute;
+let expMap, logMap, mobiusAddition, poincareDistance, projectToPoincareBall;
+let attentionInfo, attentionVersion;
+let attentionAvailable = false;
+try {
+  const attention = require('@ruvector/attention');
+  // Core mechanisms
+  DotProductAttention = attention.DotProductAttention;
+  MultiHeadAttention = attention.MultiHeadAttention;
+  HyperbolicAttention = attention.HyperbolicAttention;
+  FlashAttention = attention.FlashAttention;
+  LinearAttention = attention.LinearAttention;
+  MoEAttention = attention.MoEAttention;
+  // Graph attention
+  GraphRoPeAttention = attention.GraphRoPeAttention;
+  EdgeFeaturedAttention = attention.EdgeFeaturedAttention;
+  DualSpaceAttention = attention.DualSpaceAttention;
+  LocalGlobalAttention = attention.LocalGlobalAttention;
+  // Utilities
+  benchmarkAttention = attention.benchmarkAttention;
+  computeAttentionAsync = attention.computeAttentionAsync;
+  batchAttentionCompute = attention.batchAttentionCompute;
+  parallelAttentionCompute = attention.parallelAttentionCompute;
+  // Hyperbolic math
+  expMap = attention.expMap;
+  logMap = attention.logMap;
+  mobiusAddition = attention.mobiusAddition;
+  poincareDistance = attention.poincareDistance;
+  projectToPoincareBall = attention.projectToPoincareBall;
+  // Meta
+  attentionInfo = attention.info;
+  attentionVersion = attention.version;
+  attentionAvailable = true;
+} catch (e) {
+  // Attention not available - commands will show helpful message
+}
+
 const program = new Command();
 
 // Get package version from package.json
@@ -316,9 +356,10 @@ program
 
     // Try to load ruvector for implementation info
     if (loadRuvector()) {
-      const info = getVersion();
-      console.log(chalk.white(`  Core Version: ${chalk.yellow(info.version)}`));
-      console.log(chalk.white(`  Implementation: ${chalk.yellow(info.implementation)}`));
+      const version = typeof getVersion === 'function' ? getVersion() : 'unknown';
+      const impl = typeof getImplementationType === 'function' ? getImplementationType() : 'native';
+      console.log(chalk.white(`  Core Version: ${chalk.yellow(version)}`));
+      console.log(chalk.white(`  Implementation: ${chalk.yellow(impl)}`));
     } else {
       console.log(chalk.white(`  Core: ${chalk.gray('Not loaded (install @ruvector/core)')}`));
     }
@@ -856,6 +897,429 @@ gnnCmd
   });
 
 // =============================================================================
+// Attention Commands
+// =============================================================================
+
+// Helper to require attention module
+function requireAttention() {
+  if (!attentionAvailable) {
+    console.error(chalk.red('Error: @ruvector/attention is not installed'));
+    console.error(chalk.yellow('Install it with: npm install @ruvector/attention'));
+    process.exit(1);
+  }
+}
+
+// Attention parent command
+const attentionCmd = program
+  .command('attention')
+  .description('High-performance attention mechanism operations');
+
+// Attention compute command - run attention on input vectors
+attentionCmd
+  .command('compute')
+  .description('Compute attention over input vectors')
+  .requiredOption('-q, --query <json>', 'Query vector as JSON array')
+  .requiredOption('-k, --keys <file>', 'Keys file (JSON array of vectors)')
+  .option('-v, --values <file>', 'Values file (JSON array of vectors, defaults to keys)')
+  .option('-t, --type <type>', 'Attention type (dot|multi-head|flash|hyperbolic|linear)', 'dot')
+  .option('-h, --heads <number>', 'Number of attention heads (for multi-head)', '4')
+  .option('-d, --head-dim <number>', 'Head dimension (for multi-head)', '64')
+  .option('--curvature <number>', 'Curvature for hyperbolic attention', '1.0')
+  .option('-o, --output <file>', 'Output file for results')
+  .action((options) => {
+    requireAttention();
+    const spinner = ora('Loading keys...').start();
+
+    try {
+      const query = JSON.parse(options.query);
+      const keysData = JSON.parse(fs.readFileSync(options.keys, 'utf8'));
+      const keys = keysData.map(k => k.vector || k);
+
+      let values = keys;
+      if (options.values) {
+        const valuesData = JSON.parse(fs.readFileSync(options.values, 'utf8'));
+        values = valuesData.map(v => v.vector || v);
+      }
+
+      spinner.text = `Computing ${options.type} attention...`;
+
+      let result;
+      let attentionWeights;
+
+      switch (options.type) {
+        case 'dot': {
+          const attn = new DotProductAttention();
+          const queryMat = [query];
+          const output = attn.forward(queryMat, keys, values);
+          result = output[0];
+          attentionWeights = attn.getLastWeights ? attn.getLastWeights()[0] : null;
+          break;
+        }
+        case 'multi-head': {
+          const numHeads = parseInt(options.heads);
+          const headDim = parseInt(options.headDim);
+          const attn = new MultiHeadAttention(query.length, numHeads, headDim);
+          const queryMat = [query];
+          const output = attn.forward(queryMat, keys, values);
+          result = output[0];
+          break;
+        }
+        case 'flash': {
+          const attn = new FlashAttention(query.length);
+          const queryMat = [query];
+          const output = attn.forward(queryMat, keys, values);
+          result = output[0];
+          break;
+        }
+        case 'hyperbolic': {
+          const curvature = parseFloat(options.curvature);
+          const attn = new HyperbolicAttention(query.length, curvature);
+          const queryMat = [query];
+          const output = attn.forward(queryMat, keys, values);
+          result = output[0];
+          break;
+        }
+        case 'linear': {
+          const attn = new LinearAttention(query.length);
+          const queryMat = [query];
+          const output = attn.forward(queryMat, keys, values);
+          result = output[0];
+          break;
+        }
+        default:
+          throw new Error(`Unknown attention type: ${options.type}`);
+      }
+
+      spinner.succeed(chalk.green(`Attention computed (${options.type})`));
+
+      console.log(chalk.cyan('\nAttention Results:'));
+      console.log(chalk.white(`  Type:        ${chalk.yellow(options.type)}`));
+      console.log(chalk.white(`  Query dim:   ${chalk.yellow(query.length)}`));
+      console.log(chalk.white(`  Num keys:    ${chalk.yellow(keys.length)}`));
+      console.log(chalk.white(`  Output dim:  ${chalk.yellow(result.length)}`));
+      console.log(chalk.white(`  Output:      ${chalk.gray(`[${result.slice(0, 4).map(v => v.toFixed(4)).join(', ')}...]`)}`));
+
+      if (attentionWeights) {
+        console.log(chalk.cyan('\nAttention Weights:'));
+        attentionWeights.slice(0, 5).forEach((w, i) => {
+          console.log(chalk.gray(`  Key ${i}: ${w.toFixed(4)}`));
+        });
+        if (attentionWeights.length > 5) {
+          console.log(chalk.gray(`  ... and ${attentionWeights.length - 5} more`));
+        }
+      }
+
+      if (options.output) {
+        const outputData = { result, attentionWeights };
+        fs.writeFileSync(options.output, JSON.stringify(outputData, null, 2));
+        console.log(chalk.green(`\nResults saved to: ${options.output}`));
+      }
+    } catch (error) {
+      spinner.fail(chalk.red('Failed to compute attention'));
+      console.error(chalk.red(error.message));
+      process.exit(1);
+    }
+  });
+
+// Attention benchmark command
+attentionCmd
+  .command('benchmark')
+  .description('Benchmark attention mechanisms')
+  .option('-d, --dimension <number>', 'Vector dimension', '256')
+  .option('-n, --num-vectors <number>', 'Number of vectors', '100')
+  .option('-i, --iterations <number>', 'Benchmark iterations', '100')
+  .option('-t, --types <list>', 'Attention types to benchmark (comma-separated)', 'dot,flash,linear')
+  .action((options) => {
+    requireAttention();
+    const spinner = ora('Setting up benchmark...').start();
+
+    try {
+      const dim = parseInt(options.dimension);
+      const numVectors = parseInt(options.numVectors);
+      const iterations = parseInt(options.iterations);
+      const types = options.types.split(',').map(t => t.trim());
+
+      // Generate random test data
+      spinner.text = 'Generating test data...';
+      const query = Array.from({ length: dim }, () => Math.random());
+      const keys = Array.from({ length: numVectors }, () =>
+        Array.from({ length: dim }, () => Math.random())
+      );
+
+      console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+      console.log(chalk.cyan('                Attention Mechanism Benchmark'));
+      console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+      console.log(chalk.white(`  Dimension:    ${chalk.yellow(dim)}`));
+      console.log(chalk.white(`  Vectors:      ${chalk.yellow(numVectors)}`));
+      console.log(chalk.white(`  Iterations:   ${chalk.yellow(iterations)}`));
+      console.log('');
+
+      const results = [];
+
+      // Convert to Float32Arrays for compute()
+      const queryF32 = new Float32Array(query);
+      const keysF32 = keys.map(k => new Float32Array(k));
+
+      for (const type of types) {
+        spinner.text = `Benchmarking ${type} attention...`;
+        spinner.start();
+
+        let attn;
+        try {
+          switch (type) {
+            case 'dot':
+              attn = new DotProductAttention(dim);
+              break;
+            case 'flash':
+              attn = new FlashAttention(dim, 64);  // dim, block_size
+              break;
+            case 'linear':
+              attn = new LinearAttention(dim, 64);  // dim, num_features
+              break;
+            case 'hyperbolic':
+              attn = new HyperbolicAttention(dim, 1.0);
+              break;
+            case 'multi-head':
+              attn = new MultiHeadAttention(dim, 4);  // dim, num_heads
+              break;
+            default:
+              console.log(chalk.yellow(`  Skipping unknown type: ${type}`));
+              continue;
+          }
+        } catch (e) {
+          console.log(chalk.yellow(`  ${type}: not available (${e.message})`));
+          continue;
+        }
+
+        // Warm up
+        for (let i = 0; i < 5; i++) {
+          try {
+            attn.compute(queryF32, keysF32, keysF32);
+          } catch (e) {
+            // Some mechanisms may fail warmup
+          }
+        }
+
+        // Benchmark
+        const start = process.hrtime.bigint();
+        for (let i = 0; i < iterations; i++) {
+          attn.compute(queryF32, keysF32, keysF32);
+        }
+        const end = process.hrtime.bigint();
+        const totalMs = Number(end - start) / 1_000_000;
+        const avgMs = totalMs / iterations;
+        const opsPerSec = 1000 / avgMs;
+
+        results.push({ type, avgMs, opsPerSec });
+        spinner.succeed(chalk.green(`${type}: ${avgMs.toFixed(3)} ms/op (${opsPerSec.toFixed(1)} ops/sec)`));
+      }
+
+      // Summary
+      if (results.length > 0) {
+        console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+        console.log(chalk.cyan('                         Summary'));
+        console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+        const fastest = results.reduce((a, b) => a.avgMs < b.avgMs ? a : b);
+        console.log(chalk.green(`  Fastest: ${fastest.type} (${fastest.avgMs.toFixed(3)} ms/op)\n`));
+
+        console.log(chalk.white('  Relative Performance:'));
+        for (const r of results) {
+          const relPerf = (fastest.avgMs / r.avgMs * 100).toFixed(1);
+          const bar = '█'.repeat(Math.round(relPerf / 5));
+          console.log(chalk.white(`    ${r.type.padEnd(12)} ${chalk.cyan(bar)} ${relPerf}%`));
+        }
+      }
+    } catch (error) {
+      spinner.fail(chalk.red('Benchmark failed'));
+      console.error(chalk.red(error.message));
+      process.exit(1);
+    }
+  });
+
+// Hyperbolic math command
+attentionCmd
+  .command('hyperbolic')
+  .description('Hyperbolic geometry operations')
+  .requiredOption('-a, --action <type>', 'Action: exp-map|log-map|distance|project|mobius-add')
+  .requiredOption('-v, --vector <json>', 'Input vector(s) as JSON')
+  .option('-b, --vector-b <json>', 'Second vector for binary operations')
+  .option('-c, --curvature <number>', 'Poincaré ball curvature', '1.0')
+  .option('-o, --origin <json>', 'Origin point for exp/log maps')
+  .action((options) => {
+    requireAttention();
+
+    try {
+      const vecArray = JSON.parse(options.vector);
+      const vec = new Float32Array(vecArray);
+      const curvature = parseFloat(options.curvature);
+
+      let result;
+      let description;
+
+      switch (options.action) {
+        case 'exp-map': {
+          const originArray = options.origin ? JSON.parse(options.origin) : Array(vec.length).fill(0);
+          const origin = new Float32Array(originArray);
+          result = expMap(origin, vec, curvature);
+          description = 'Exponential map (tangent → Poincaré ball)';
+          break;
+        }
+        case 'log-map': {
+          const originArray = options.origin ? JSON.parse(options.origin) : Array(vec.length).fill(0);
+          const origin = new Float32Array(originArray);
+          result = logMap(origin, vec, curvature);
+          description = 'Logarithmic map (Poincaré ball → tangent)';
+          break;
+        }
+        case 'distance': {
+          if (!options.vectorB) {
+            throw new Error('--vector-b required for distance calculation');
+          }
+          const vecBArray = JSON.parse(options.vectorB);
+          const vecB = new Float32Array(vecBArray);
+          result = poincareDistance(vec, vecB, curvature);
+          description = 'Poincaré distance';
+          break;
+        }
+        case 'project': {
+          result = projectToPoincareBall(vec, curvature);
+          description = 'Project to Poincaré ball';
+          break;
+        }
+        case 'mobius-add': {
+          if (!options.vectorB) {
+            throw new Error('--vector-b required for Möbius addition');
+          }
+          const vecBArray = JSON.parse(options.vectorB);
+          const vecB = new Float32Array(vecBArray);
+          result = mobiusAddition(vec, vecB, curvature);
+          description = 'Möbius addition';
+          break;
+        }
+        default:
+          throw new Error(`Unknown action: ${options.action}`);
+      }
+
+      console.log(chalk.cyan('\nHyperbolic Operation:'));
+      console.log(chalk.white(`  Action:     ${chalk.yellow(description)}`));
+      console.log(chalk.white(`  Curvature:  ${chalk.yellow(curvature)}`));
+
+      if (typeof result === 'number') {
+        console.log(chalk.white(`  Result:     ${chalk.green(result.toFixed(6))}`));
+      } else {
+        const resultArray = Array.from(result);
+        console.log(chalk.white(`  Input dim:  ${chalk.yellow(vec.length)}`));
+        console.log(chalk.white(`  Output dim: ${chalk.yellow(resultArray.length)}`));
+        console.log(chalk.white(`  Result:     ${chalk.gray(`[${resultArray.slice(0, 5).map(v => v.toFixed(4)).join(', ')}...]`)}`));
+
+        // Compute norm to verify it's in the ball
+        const norm = Math.sqrt(resultArray.reduce((sum, x) => sum + x * x, 0));
+        console.log(chalk.white(`  Norm:       ${chalk.yellow(norm.toFixed(6))} ${norm < 1 ? chalk.green('(inside ball)') : chalk.red('(outside ball)')}`));
+      }
+    } catch (error) {
+      console.error(chalk.red('Hyperbolic operation failed:'), error.message);
+      process.exit(1);
+    }
+  });
+
+// Attention info command
+attentionCmd
+  .command('info')
+  .description('Show attention module information')
+  .action(() => {
+    if (!attentionAvailable) {
+      console.log(chalk.yellow('\nAttention Module: Not installed'));
+      console.log(chalk.white('Install with: npm install @ruvector/attention'));
+      return;
+    }
+
+    console.log(chalk.cyan('\nAttention Module Information'));
+    console.log(chalk.white(`  Status:         ${chalk.green('Available')}`));
+    console.log(chalk.white(`  Version:        ${chalk.yellow(attentionVersion ? attentionVersion() : 'unknown')}`));
+    console.log(chalk.white(`  Platform:       ${chalk.yellow(process.platform)}`));
+    console.log(chalk.white(`  Architecture:   ${chalk.yellow(process.arch)}`));
+
+    console.log(chalk.cyan('\nCore Attention Mechanisms:'));
+    console.log(chalk.white(`  • DotProductAttention  - Scaled dot-product attention`));
+    console.log(chalk.white(`  • MultiHeadAttention   - Multi-head self-attention`));
+    console.log(chalk.white(`  • FlashAttention       - Memory-efficient IO-aware attention`));
+    console.log(chalk.white(`  • HyperbolicAttention  - Poincaré ball attention`));
+    console.log(chalk.white(`  • LinearAttention      - O(n) linear complexity attention`));
+    console.log(chalk.white(`  • MoEAttention         - Mixture of Experts attention`));
+
+    console.log(chalk.cyan('\nGraph Attention:'));
+    console.log(chalk.white(`  • GraphRoPeAttention   - Rotary position embeddings for graphs`));
+    console.log(chalk.white(`  • EdgeFeaturedAttention - Edge feature-enhanced attention`));
+    console.log(chalk.white(`  • DualSpaceAttention   - Euclidean + hyperbolic dual space`));
+    console.log(chalk.white(`  • LocalGlobalAttention - Local-global graph attention`));
+
+    console.log(chalk.cyan('\nHyperbolic Math:'));
+    console.log(chalk.white(`  • expMap, logMap       - Exponential/logarithmic maps`));
+    console.log(chalk.white(`  • mobiusAddition       - Möbius addition in Poincaré ball`));
+    console.log(chalk.white(`  • poincareDistance     - Hyperbolic distance metric`));
+    console.log(chalk.white(`  • projectToPoincareBall - Project vectors to ball`));
+
+    console.log(chalk.cyan('\nTraining Utilities:'));
+    console.log(chalk.white(`  • AdamOptimizer, AdamWOptimizer, SgdOptimizer`));
+    console.log(chalk.white(`  • InfoNceLoss, LocalContrastiveLoss`));
+    console.log(chalk.white(`  • CurriculumScheduler, TemperatureAnnealing`));
+    console.log(chalk.white(`  • HardNegativeMiner, InBatchMiner`));
+  });
+
+// Attention list command - list available mechanisms
+attentionCmd
+  .command('list')
+  .description('List all available attention mechanisms')
+  .option('-v, --verbose', 'Show detailed information')
+  .action((options) => {
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('              Available Attention Mechanisms'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    const mechanisms = [
+      { name: 'DotProductAttention', type: 'core', complexity: 'O(n²)', available: !!DotProductAttention },
+      { name: 'MultiHeadAttention', type: 'core', complexity: 'O(n²)', available: !!MultiHeadAttention },
+      { name: 'FlashAttention', type: 'core', complexity: 'O(n²) IO-optimized', available: !!FlashAttention },
+      { name: 'HyperbolicAttention', type: 'core', complexity: 'O(n²)', available: !!HyperbolicAttention },
+      { name: 'LinearAttention', type: 'core', complexity: 'O(n)', available: !!LinearAttention },
+      { name: 'MoEAttention', type: 'core', complexity: 'O(n*k)', available: !!MoEAttention },
+      { name: 'GraphRoPeAttention', type: 'graph', complexity: 'O(n²)', available: !!GraphRoPeAttention },
+      { name: 'EdgeFeaturedAttention', type: 'graph', complexity: 'O(n²)', available: !!EdgeFeaturedAttention },
+      { name: 'DualSpaceAttention', type: 'graph', complexity: 'O(n²)', available: !!DualSpaceAttention },
+      { name: 'LocalGlobalAttention', type: 'graph', complexity: 'O(n*k)', available: !!LocalGlobalAttention },
+    ];
+
+    console.log(chalk.white('  Core Attention:'));
+    mechanisms.filter(m => m.type === 'core').forEach(m => {
+      const status = m.available ? chalk.green('✓') : chalk.red('✗');
+      console.log(chalk.white(`    ${status} ${m.name.padEnd(22)} ${chalk.gray(m.complexity)}`));
+    });
+
+    console.log(chalk.white('\n  Graph Attention:'));
+    mechanisms.filter(m => m.type === 'graph').forEach(m => {
+      const status = m.available ? chalk.green('✓') : chalk.red('✗');
+      console.log(chalk.white(`    ${status} ${m.name.padEnd(22)} ${chalk.gray(m.complexity)}`));
+    });
+
+    if (!attentionAvailable) {
+      console.log(chalk.yellow('\n  Note: @ruvector/attention not installed'));
+      console.log(chalk.white('  Install with: npm install @ruvector/attention'));
+    }
+
+    if (options.verbose) {
+      console.log(chalk.cyan('\n  Usage Examples:'));
+      console.log(chalk.gray('    # Compute dot-product attention'));
+      console.log(chalk.white('    npx ruvector attention compute -q "[1,2,3]" -k keys.json -t dot'));
+      console.log(chalk.gray('\n    # Benchmark attention mechanisms'));
+      console.log(chalk.white('    npx ruvector attention benchmark -d 256 -n 100'));
+      console.log(chalk.gray('\n    # Hyperbolic distance'));
+      console.log(chalk.white('    npx ruvector attention hyperbolic -a distance -v "[0.1,0.2]" -b "[0.3,0.4]"'));
+    }
+  });
+
+// =============================================================================
 // Doctor Command - Check system health and dependencies
 // =============================================================================
 
@@ -942,8 +1406,10 @@ program
 
     // Check if native binding works
     if (coreAvailable && loadRuvector()) {
-      const info = getVersion();
-      console.log(chalk.green(`  ✓ Native binding working (${info.implementation})`));
+      const version = typeof getVersion === 'function' ? getVersion() : null;
+      const impl = typeof getImplementationType === 'function' ? getImplementationType() : 'native';
+      const versionStr = version ? `, v${version}` : '';
+      console.log(chalk.green(`  ✓ Native binding working (${impl}${versionStr})`));
     } else if (coreAvailable) {
       console.log(chalk.yellow(`  ! Native binding failed to load`));
       warnings++;
@@ -954,6 +1420,13 @@ program
       console.log(chalk.green(`  ✓ @ruvector/gnn installed`));
     } else {
       console.log(chalk.gray(`  ○ @ruvector/gnn not installed (optional)`));
+    }
+
+    // Check @ruvector/attention
+    if (attentionAvailable) {
+      console.log(chalk.green(`  ✓ @ruvector/attention installed`));
+    } else {
+      console.log(chalk.gray(`  ○ @ruvector/attention not installed (optional)`));
     }
 
     // Check @ruvector/graph-node

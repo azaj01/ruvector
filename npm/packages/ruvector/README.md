@@ -484,6 +484,119 @@ npx ruvector gnn search -q "[1.0,0.0,0.0]" -c candidates.json -k 5
 #   -t, --temperature  Softmax temperature (default: 1.0)
 ```
 
+### Attention Commands
+
+Ruvector includes high-performance attention mechanisms for transformer-based operations, hyperbolic embeddings, and graph attention.
+
+```bash
+# Install the attention module (optional)
+npm install @ruvector/attention
+```
+
+#### Attention Mechanisms Reference
+
+| Mechanism | Type | Complexity | When to Use |
+|-----------|------|------------|-------------|
+| **DotProductAttention** | Core | O(n²) | Standard scaled dot-product attention for transformers |
+| **MultiHeadAttention** | Core | O(n²) | Parallel attention heads for capturing different relationships |
+| **FlashAttention** | Core | O(n²) IO-optimized | Memory-efficient attention for long sequences |
+| **HyperbolicAttention** | Core | O(n²) | Hierarchical data, tree-like structures, taxonomies |
+| **LinearAttention** | Core | O(n) | Very long sequences where O(n²) is prohibitive |
+| **MoEAttention** | Core | O(n*k) | Mixture of Experts routing, specialized attention |
+| **GraphRoPeAttention** | Graph | O(n²) | Graph data with rotary position embeddings |
+| **EdgeFeaturedAttention** | Graph | O(n²) | Graphs with rich edge features/attributes |
+| **DualSpaceAttention** | Graph | O(n²) | Combined Euclidean + hyperbolic representation |
+| **LocalGlobalAttention** | Graph | O(n*k) | Large graphs with local + global context |
+
+#### Attention Info
+
+```bash
+# Show attention module information
+npx ruvector attention info
+
+# Output:
+#   Attention Module Information
+#     Status:         Available
+#     Version:        0.1.0
+#     Platform:       linux
+#     Architecture:   x64
+#
+#   Core Attention Mechanisms:
+#     • DotProductAttention  - Scaled dot-product attention
+#     • MultiHeadAttention   - Multi-head self-attention
+#     • FlashAttention       - Memory-efficient IO-aware attention
+#     • HyperbolicAttention  - Poincaré ball attention
+#     • LinearAttention      - O(n) linear complexity attention
+#     • MoEAttention         - Mixture of Experts attention
+```
+
+#### Attention List
+
+```bash
+# List all available attention mechanisms
+npx ruvector attention list
+
+# With verbose details
+npx ruvector attention list -v
+```
+
+#### Attention Benchmark
+
+```bash
+# Benchmark attention mechanisms
+npx ruvector attention benchmark -d 256 -n 100 -i 100
+
+# Options:
+#   -d, --dimension     Vector dimension (default: 256)
+#   -n, --num-vectors   Number of vectors (default: 100)
+#   -i, --iterations    Benchmark iterations (default: 100)
+#   -t, --types         Attention types to benchmark (default: dot,flash,linear)
+
+# Example output:
+#   Dimension:    256
+#   Vectors:      100
+#   Iterations:   100
+#
+#   dot:   0.012ms/op (84,386 ops/sec)
+#   flash: 0.012ms/op (82,844 ops/sec)
+#   linear: 0.066ms/op (15,259 ops/sec)
+```
+
+#### Hyperbolic Operations
+
+```bash
+# Calculate Poincaré distance between two points
+npx ruvector attention hyperbolic -a distance -v "[0.1,0.2,0.3]" -b "[0.4,0.5,0.6]"
+
+# Project vector to Poincaré ball
+npx ruvector attention hyperbolic -a project -v "[1.5,2.0,0.8]"
+
+# Möbius addition in hyperbolic space
+npx ruvector attention hyperbolic -a mobius-add -v "[0.1,0.2]" -b "[0.3,0.4]"
+
+# Exponential map (tangent space → Poincaré ball)
+npx ruvector attention hyperbolic -a exp-map -v "[0.1,0.2,0.3]"
+
+# Options:
+#   -a, --action      Action: distance|project|mobius-add|exp-map|log-map
+#   -v, --vector      Input vector as JSON array (required)
+#   -b, --vector-b    Second vector for binary operations
+#   -c, --curvature   Poincaré ball curvature (default: 1.0)
+```
+
+#### When to Use Each Attention Type
+
+| Use Case | Recommended Attention | Reason |
+|----------|----------------------|--------|
+| **Standard NLP/Transformers** | MultiHeadAttention | Industry standard, well-tested |
+| **Long Documents (>4K tokens)** | FlashAttention or LinearAttention | Memory efficient |
+| **Hierarchical Classification** | HyperbolicAttention | Captures tree-like structures |
+| **Knowledge Graphs** | GraphRoPeAttention | Position-aware graph attention |
+| **Multi-Relational Graphs** | EdgeFeaturedAttention | Leverages edge attributes |
+| **Taxonomy/Ontology Search** | DualSpaceAttention | Best of both Euclidean + hyperbolic |
+| **Large-Scale Graphs** | LocalGlobalAttention | Efficient local + global context |
+| **Model Routing/MoE** | MoEAttention | Expert selection and routing |
+
 ## 📊 Performance Benchmarks
 
 Tested on AMD Ryzen 9 5950X, 128-dimensional vectors:
