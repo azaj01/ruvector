@@ -44,9 +44,26 @@ hybrid-search = []
 filtered-search = []
 neon-compat = []  # Neon-specific optimizations
 
+# Advanced AI features (opt-in)
+learning = []       # Self-learning / ReasoningBank
+attention = []      # 39 attention mechanisms
+gnn = []            # GNN layers (GCN, GraphSAGE, GAT, GIN)
+hyperbolic = []     # Hyperbolic embeddings (Poincaré, Lorentz)
+sparse = []         # Sparse vectors (BM25, SPLADE)
+graph = []          # Graph operations & Cypher
+routing = []        # Tiny Dancer AI routing
+
+# Feature bundles
+ai-complete = ["learning", "attention", "gnn", "routing"]
+graph-complete = ["hyperbolic", "sparse", "graph"]
+all-features = ["ai-complete", "graph-complete"]
+
 [dependencies]
 # PostgreSQL extension framework
 pgrx = "0.12"
+
+# Pin home to avoid edition2024 issues
+home = "=0.5.9"
 
 # SIMD acceleration (leverages existing ruvector-core capabilities)
 simsimd = "5.9"
@@ -65,7 +82,7 @@ rayon = "1.10"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-bincode = "2.0.0-rc.3"
+bincode = "1.3"  # Use 1.x for Rust 1.83 compatibility
 rkyv = "0.8"
 
 # Memory management
@@ -89,6 +106,10 @@ thiserror = "1.0"
 
 # Logging
 tracing = "0.1"
+
+# Lazy static initialization
+lazy_static = "1.4"
+once_cell = "1.19"
 
 # Optional: Use ruvector-core for shared implementations
 # Uncomment to link with existing ruvector-core crate

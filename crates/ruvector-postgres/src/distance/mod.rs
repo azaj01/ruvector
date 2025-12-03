@@ -98,10 +98,11 @@ fn detect_simd_capability() -> SimdCapability {
 fn create_distance_functions(cap: SimdCapability) -> DistanceFunctions {
     match cap {
         SimdCapability::Avx512 => DistanceFunctions {
-            euclidean: simd::euclidean_distance_avx512_wrapper,
-            cosine: simd::cosine_distance_avx512_wrapper,
-            inner_product: simd::inner_product_avx512_wrapper,
-            manhattan: simd::manhattan_distance_avx2_wrapper, // AVX-512 manhattan not critical
+            // Use AVX2 wrappers as fallback until AVX-512 implementations are added
+            euclidean: simd::euclidean_distance_avx2_wrapper,
+            cosine: simd::cosine_distance_avx2_wrapper,
+            inner_product: simd::inner_product_avx2_wrapper,
+            manhattan: simd::manhattan_distance_avx2_wrapper,
         },
         SimdCapability::Avx2 => DistanceFunctions {
             euclidean: simd::euclidean_distance_avx2_wrapper,

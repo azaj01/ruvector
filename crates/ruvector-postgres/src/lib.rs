@@ -15,6 +15,13 @@ pub mod distance;
 pub mod index;
 pub mod quantization;
 pub mod operators;
+pub mod attention;
+pub mod sparse;
+pub mod gnn;
+pub mod routing;
+pub mod learning;
+pub mod graph;
+pub mod hyperbolic;
 
 // Re-exports for convenience
 pub use types::RuVector;
