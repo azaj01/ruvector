@@ -36,6 +36,7 @@ members = [
     "examples/google-cloud",
     "examples/ruvLLM",
     "crates/sona",
+    "crates/rvlite",
 ]
 resolver = "2"
 
@@ -123,3 +124,8 @@ opt-level = 0
 debug = true
 
 [profile.test]
+
+# Patch hnsw_rs to use rand 0.8 instead of 0.9 for WASM compatibility
+# This resolves the getrandom version conflict (0.2 vs 0.3)
+[patch.crates-io]
+hnsw_rs = { path = "./patches/hnsw_rs" }
