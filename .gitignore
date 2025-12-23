@@ -42,6 +42,12 @@ credentials.json
 # Removed Windows wrapper files per user request
 hive-mind-prompt-*.txt
 
+
+# Removed Windows wrapper files per user request
+hive-mind-prompt-*.txt
+examples/scipix/test_images/
+.fastembed_cache/
+
 # Claude Flow generated files
 .claude/settings.local.json
 .mcp.json
@@ -68,5 +74,3 @@ coordination/orchestration/*
 claude-flow
 # Removed Windows wrapper files per user request
 hive-mind-prompt-*.txt
-examples/scipix/test_images/
-.fastembed_cache/

@@ -1,0 +1,83 @@
+[package]
+name = "ruvector-mincut"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Subpolynomial-time dynamic minimum cut algorithm with real-time graph monitoring"
+
+[dependencies]
+# RuVector dependencies
+ruvector-core = { version = "0.1.2", path = "../ruvector-core", default-features = false }
+ruvector-graph = { version = "0.1.2", path = "../ruvector-graph", default-features = false, optional = true }
+
+# Core dependencies
+petgraph = "0.6"
+rayon = { workspace = true }
+crossbeam = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+
+# Data structures
+roaring = "0.10"
+ordered-float = "4.2"
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+mockall = { workspace = true }
+
+[features]
+default = ["exact", "approximate"]
+full = ["exact", "approximate", "integration", "monitoring", "simd", "agentic"]
+exact = []  # Exact minimum cut algorithm
+approximate = []  # (1+ε)-approximate algorithm
+integration = ["ruvector-graph"]  # GraphDB integration
+monitoring = []  # Real-time monitoring with callbacks
+simd = ["ruvector-core/simd"]
+wasm = []  # WASM compatibility mode
+agentic = []  # 256-core parallel agentic chip backend
+
+[lib]
+crate-type = ["rlib"]
+bench = false
+
+[[bench]]
+name = "mincut_bench"
+harness = false
+
+[[bench]]
+name = "bounded_bench"
+harness = false
+
+[[bench]]
+name = "sota_bench"
+harness = false
+
+[[bench]]
+name = "paper_algorithms_bench"
+harness = false
+
+[[example]]
+name = "mincut_neural_optimizer"
+path = "../../examples/mincut/neural_optimizer/main.rs"
+required-features = ["exact"]
+
+[[example]]
+name = "mincut_causal_discovery"
+path = "../../examples/mincut/causal_discovery/main.rs"
+required-features = ["exact"]
+
+[[example]]
+name = "morphogenetic"
+path = "../../examples/mincut/morphogenetic/main.rs"
+required-features = ["exact"]
