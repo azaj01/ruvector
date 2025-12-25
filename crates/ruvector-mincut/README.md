@@ -6,7 +6,9 @@
 [![GitHub](https://img.shields.io/badge/GitHub-ruvnet%2Fruvector-blue?logo=github)](https://github.com/ruvnet/ruvector)
 [![ruv.io](https://img.shields.io/badge/ruv.io-AI%20Infrastructure-orange)](https://ruv.io)
 
-**Find the weakest link in any network — instantly, even as it changes.**
+**Continuous structural integrity as a first-class signal for systems that must not drift.**
+
+*Dynamic min-cut for self-healing infrastructure, AI agent coordination, and safety-critical systems.*
 
 ---
 
@@ -14,9 +16,7 @@
 
 Every complex system — your brain, the internet, a hospital network, an AI model — is a web of connections. Understanding where these connections are weakest unlocks the ability to **heal, protect, and optimize** at speeds never before possible.
 
-**RuVector MinCut** is the world's first production implementation of a December 2025 mathematical breakthrough that solves a 50-year-old computer science problem: How do you find the weakest point in a constantly changing network *without* starting from scratch every time?
-
-The answer enables a new generation of applications across medicine, AI, and critical infrastructure.
+**RuVector MinCut** is a production-oriented implementation of recent fully-dynamic min-cut research, including the December 2025 breakthrough ([arXiv:2512.13105](https://arxiv.org/abs/2512.13105)) by El-Hayek, Henzinger, and Li that achieves deterministic exact subpolynomial updates for cuts above polylogarithmic size.
 
 ---
 
@@ -42,8 +42,6 @@ Modern networks must stay connected despite failures, attacks, and constant chan
 - **Detect attacks in real-time** by spotting unusual patterns in network vulnerability
 - **Optimize 5G/satellite networks** that add and drop connections thousands of times per second
 
-This is why telecommunications companies and cloud providers need algorithms that handle change without restarting.
-
 ### AI: Self-Learning & Self-Optimizing Systems
 
 Modern AI isn't just neural networks — it's networks of networks, agents, and data flows:
@@ -53,32 +51,20 @@ Modern AI isn't just neural networks — it's networks of networks, agents, and 
 - **Build self-healing AI pipelines** that detect and route around failing components
 - **Enable continual learning** where AI can safely add new knowledge without forgetting old patterns
 
-The key insight: AI systems that understand their own structure can optimize themselves.
-
-### The Breakthrough Explained Simply
-
-Imagine monitoring a highway system. Every time a road closes or opens, you want to know: *"What's the minimum number of roads that, if blocked, would split the country in two?"*
-
-**Old approach**: Drive every single road again to figure it out. For a country with a million roads, this could take days.
-
-**New approach (RuVector MinCut)**: Keep a smart summary of the network. When one road changes, update just the affected parts in microseconds.
-
-This isn't just faster — it's a *fundamentally different* speed category. Mathematicians call it "subpolynomial time," meaning it barely slows down even as networks grow to billions of nodes.
-
 ---
 
 ## The December 2025 Breakthrough
 
-RuVector MinCut implements [arxiv:2512.13105](https://arxiv.org/abs/2512.13105) — the first algorithm in history that:
+RuVector MinCut implements [arXiv:2512.13105](https://arxiv.org/abs/2512.13105) — deterministic exact fully-dynamic min-cut in subpolynomial time:
 
 | Property | What It Means | Why It Matters |
 |----------|---------------|----------------|
-| **Subpolynomial Updates** | Changes process in near-instant time | Real-time monitoring of massive networks |
+| **Subpolynomial Updates** | Update time grows slower than any polynomial | Real-time monitoring of massive networks |
 | **Fully Dynamic** | Handles additions AND deletions | Networks that shrink matter too (failures, pruning) |
 | **Deterministic** | Same input = same output, always | Critical for security, medicine, and reproducible science |
 | **Exact Results** | No approximations or probability | When lives or money depend on the answer |
 
-> *Previous algorithms had to choose 2 of these 4. This is the first to achieve all four.*
+> *Applies to cuts of superpolylogarithmic size (λ > log^c n). See [Limitations](#%EF%B8%8F-limitations--scope) for details.*
 
 ---
 
@@ -86,45 +72,39 @@ RuVector MinCut implements [arxiv:2512.13105](https://arxiv.org/abs/2512.13105) 
 
 | Domain | Use Case | Impact |
 |--------|----------|--------|
-| **Neuroscience** | Brain connectivity analysis | Detect Alzheimer's 10 years earlier |
+| **Neuroscience** | Brain connectivity analysis | Early disease detection |
 | **Surgery Planning** | Identify critical pathways | Reduce surgical complications |
 | **Drug Discovery** | Protein interaction networks | Find new drug targets faster |
 | **Telecom** | Network resilience monitoring | Prevent outages before they happen |
 | **Cybersecurity** | Attack surface analysis | Know which servers are single points of failure |
-| **AI Training** | Neural network pruning | 10x smaller models, same accuracy |
+| **AI Training** | Neural network pruning | Smaller models, same accuracy |
 | **Multi-Agent AI** | Communication optimization | Faster, more efficient agent coordination |
 | **Autonomous Systems** | Self-healing architectures | AI that repairs itself |
-| **Supply Chain** | Vulnerability analysis | Identify hidden dependencies |
-| **Social Networks** | Community detection | Real-time trend and influence tracking |
 
 ---
 
 ## ✨ What Makes This Different
 
-For decades, researchers faced an impossible choice: you could have *fast* updates OR *accurate* results OR *predictable* behavior — but never all three. This library is the first to deliver all of them.
+This library delivers deterministic, exact, fully-dynamic min-cut based on recent theoretical advances.
 
-### The Four Properties No One Else Has
+### Core Properties
 
-| Property | What It Means in Plain English | Why You Should Care |
-|----------|-------------------------------|---------------------|
-| **Always Right** | Every answer is mathematically correct — no dice rolls, no "probably correct" | Medical diagnosis, financial systems, and security can't afford "usually works" |
-| **Perfectly Predictable** | Same input always produces the same output | Essential for debugging, auditing, and reproducible research |
-| **Handles Any Change** | Add connections, remove connections — both work equally fast | Real networks grow AND shrink (failures, pruning, scaling down) |
-| **Barely Slows Down** | Processing time grows slower than any polynomial as networks scale | A billion-node network is only slightly slower than a thousand-node one |
-
-> **Bottom line**: Previous solutions made you choose 2-3 of these. RuVector MinCut is the first to achieve all four — making it suitable for applications where correctness and speed both matter.
+| Property | What It Means | Measured Performance |
+|----------|---------------|---------------------|
+| **Always Right** | Mathematically correct — no dice rolls | Essential for safety-critical systems |
+| **Perfectly Predictable** | Same input = same output | Essential for debugging and auditing |
+| **Handles Any Change** | Insertions and deletions equally fast | Real networks grow AND shrink |
+| **Scales Subpolynomially** | Update time grows slower than any polynomial | n^0.12 scaling across tested ranges (100–1600 vertices) |
 
 ### Production-Ready Extensions
 
-We didn't just implement the research paper — we made it ready for real-world deployment:
-
 | Feature | What It Does | Real-World Benefit |
 |---------|--------------|-------------------|
-| **Runs on 256 Cores** | Splits work across many processors simultaneously | Handles massive networks in parallel |
-| **Fits in 8KB per Core** | Memory-efficient design verified at compile time | Deploys on edge devices, embedded systems, and constrained environments |
-| **Smart Caching** | Remembers previous calculations to avoid redundant work | Near-instant updates for most changes |
-| **Batch Processing** | Groups multiple changes together efficiently | High-throughput streaming applications |
-| **Lazy Evaluation** | Only computes what you actually need, when you need it | Saves resources when queries are infrequent |
+| **Runs on 256 Cores** | Splits work across many processors | Handles massive networks in parallel |
+| **Fits in 8KB per Core** | Memory-efficient design ([compile-time verified](src/agentic/compact.rs)) | Deploys on edge devices and embedded systems |
+| **Smart Caching** | Remembers previous calculations | Near-instant updates for most changes |
+| **Batch Processing** | Groups multiple changes together | High-throughput streaming applications |
+| **Lazy Evaluation** | Computes only what you need | Saves resources when queries are infrequent |
 
 ---
 
@@ -136,12 +116,10 @@ We didn't just implement the research paper — we made it ready for real-world 
 - [Applications at a Glance](#applications-at-a-glance)
 - [What Makes This Different](#-what-makes-this-different)
 - [Quick Start](#-quick-start)
-- [📖 User Guide](#-user-guide)
+- [User Guide](#-user-guide)
 - [Key Features & Benefits](#-key-features--benefits)
 - [Performance](#-performance-characteristics)
-- [Use Cases](#use-cases)
 - [Architecture](#architecture)
-- [API Reference](#api-reference)
 - [Benchmarks](#benchmarks)
 - [Contributing](#-contributing)
 - [References](#-references)
@@ -291,7 +269,7 @@ Optimized for deployment on agentic chips with 256 WASM cores × 8KB memory each
 
 | Feature | Status | Specification |
 |---------|--------|---------------|
-| **Compact Structures** | ✅ Complete | 6.7KB per core (verified at compile-time) |
+| **Compact Structures** | ✅ Complete | 6.7KB per core ([compile-time verified](src/agentic/compact.rs#L15-L25)) |
 | **BitSet256** | ✅ Complete | 32-byte membership (vs RoaringBitmap's 100s of bytes) |
 | **256-Core Parallel** | ✅ Complete | Lock-free coordination with atomic CAS |
 | **WASM SIMD128** | ✅ Integrated | Accelerated boundary computation |
@@ -559,6 +537,16 @@ mincut.insert_edge(2, 3, 1.0)?;
 
 > **Bottom line**: RuVector MinCut is the only Rust library offering subpolynomial dynamic updates with deterministic exact results.
 
+### ⚠️ Limitations & Scope
+
+Theoretical guarantees depend on graph model and cut size regime. Per the underlying paper ([arXiv:2512.13105](https://arxiv.org/abs/2512.13105)):
+
+- **Cut size regime**: Subpolynomial bounds apply to cuts of superpolylogarithmic size (λ > log^c n for some constant c)
+- **Practical defaults**: Our implementation uses practical parameter choices; see `SubpolyConfig` for tuning
+- **Benchmark scope**: Measured scaling (n^0.12) is empirical on test graphs; your mileage may vary on different topologies
+
+For formal complexity bounds and proofs, consult the original paper.
+
 ## Architecture
 
 The crate implements a sophisticated multi-layered architecture:
@@ -680,7 +668,16 @@ See [API.md](docs/API.md) for complete API documentation with examples.
 
 ## Benchmarks
 
-Benchmark results on a graph with 10,000 vertices:
+### Reproducibility
+
+```
+Environment: Linux 6.8.0 (x86_64), Rust 1.77+, 8-core AMD EPYC
+Commit: c7a3e73d (main)
+Command: cargo bench --features full -p ruvector-mincut
+Graph: Synthetic path + cross-edges (see examples/subpoly_bench.rs)
+```
+
+Results on a graph with 10,000 vertices:
 
 ```
 Dynamic MinCut Operations:
@@ -825,7 +822,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) f
 git clone https://github.com/ruvnet/ruvector.git
 cd ruvector/crates/ruvector-mincut
 
-# Run tests (324+ passing)
+# Run tests (448+ passing)
 cargo test --all-features
 
 # Run benchmarks
@@ -876,7 +873,7 @@ This implementation is based on research in dynamic graph algorithms:
 - **Dynamic Minimum Cut**: Thorup (2007)
 - **Graph Sparsification**: Benczúr & Karger (1996)
 - **Hierarchical Decomposition**: Thorup & Karger (2000)
-- **Deterministic Dynamic Min-Cut**: Jin et al. (December 2025)
+- **Deterministic Dynamic Min-Cut**: El-Hayek, Henzinger & Li (December 2025)
 
 ---
 
@@ -890,7 +887,7 @@ This implementation is based on research in dynamic graph algorithms:
 
 4. Henzinger, M., & King, V. (1999). "Randomized Fully Dynamic Graph Algorithms with Polylogarithmic Time per Operation". *JACM*.
 
-5. Jin, C., Naderi, D., & Yu, H. (December 2025). "Deterministic Exact Subpolynomial-Time Algorithms for Global Minimum Cut". *arXiv:2512.13105*. **[First deterministic exact fully-dynamic min-cut algorithm]**
+5. El-Hayek, A., Henzinger, M., & Li, J. (December 2025). "Deterministic and Exact Fully-dynamic Minimum Cut of Superpolylogarithmic Size in Subpolynomial Time". *arXiv:2512.13105*. **[First deterministic exact fully-dynamic min-cut algorithm for cuts above polylogarithmic size]**
 
 6. Goranci, G., et al. (October 2025). "Dynamic Connectivity with Expected Polylogarithmic Worst-Case Update Time". *arXiv:2510.08297*. **[O(log³ n) worst-case dynamic connectivity]**
 
