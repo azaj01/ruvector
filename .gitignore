@@ -48,6 +48,9 @@ hive-mind-prompt-*.txt
 examples/scipix/test_images/
 .fastembed_cache/
 
+# Apify actor storage datasets
+examples/apify/*/storage/
+
 # Claude Flow generated files
 .claude/settings.local.json
 .mcp.json
