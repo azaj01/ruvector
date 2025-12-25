@@ -85,13 +85,16 @@ npx ruvector
 | **Latency (p50)** | **61µs** | ~2ms | ~1ms | ~5ms | ~50ms |
 | **Memory (1M vec)** | 200MB* | 2GB | 1.5GB | 1GB | 3GB |
 | **Graph Queries** | ✅ Cypher | ❌ | ❌ | ❌ | ❌ |
+| **SPARQL/RDF** | ✅ W3C 1.1 | ❌ | ❌ | ❌ | ❌ |
 | **Hyperedges** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Dynamic Min-Cut** | ✅ n^0.12 | ❌ | ❌ | ❌ | ❌ |
 | **Self-Learning (GNN)** | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Runtime Adaptation (SONA)** | ✅ LoRA+EWC++ | ❌ | ❌ | ❌ | ❌ |
 | **AI Agent Routing** | ✅ Tiny Dancer | ❌ | ❌ | ❌ | ❌ |
 | **Attention Mechanisms** | ✅ 39 types | ❌ | ❌ | ❌ | ❌ |
-| **Hyperbolic Embeddings** | ✅ Poincaré | ❌ | ❌ | ❌ | ❌ |
-| **PostgreSQL Extension** | ✅ pgvector drop-in | ❌ | ❌ | ❌ | ❌ |
+| **Hyperbolic Embeddings** | ✅ Poincaré+Lorentz | ❌ | ❌ | ❌ | ❌ |
+| **Local Embeddings** | ✅ 6 models | ❌ | ❌ | ❌ | ❌ |
+| **PostgreSQL Extension** | ✅ 77+ functions | ❌ | ❌ | ❌ | ❌ |
 | **SIMD Optimization** | ✅ AVX-512/NEON | Partial | ✅ | ✅ | ❌ |
 | **Metadata Filtering** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Sparse Vectors** | ✅ BM25/TF-IDF | ✅ | ✅ | ✅ | ❌ |
@@ -101,6 +104,7 @@ npx ruvector
 | **Auto-Compression** | ✅ 2-32x | ❌ | ❌ | ✅ | ❌ |
 | **Snapshots/Backups** | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Browser/WASM** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Standalone Edge DB** | ✅ rvLite | ❌ | ❌ | ❌ | ❌ |
 | **Differentiable** | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Multi-Tenancy** | ✅ Collections | ✅ | ✅ | ✅ | ✅ |
 | **Open Source** | ✅ MIT | ❌ | ✅ | ✅ | ✅ |
@@ -387,6 +391,55 @@ All crates are published to [crates.io](https://crates.io) under the `ruvector-*
 | [ruvector-router-ffi](./crates/ruvector-router-ffi) | FFI bindings for other languages | [![crates.io](https://img.shields.io/crates/v/ruvector-router-ffi.svg)](https://crates.io/crates/ruvector-router-ffi) |
 | [ruvector-router-wasm](./crates/ruvector-router-wasm) | WASM bindings for browser routing | [![crates.io](https://img.shields.io/crates/v/ruvector-router-wasm.svg)](https://crates.io/crates/ruvector-router-wasm) |
 
+### Dynamic Min-Cut (December 2025 Breakthrough)
+
+| Crate | Description | crates.io |
+|-------|-------------|-----------|
+| [ruvector-mincut](./crates/ruvector-mincut) | Subpolynomial fully-dynamic min-cut ([arXiv:2512.13105](https://arxiv.org/abs/2512.13105)) | [![crates.io](https://img.shields.io/crates/v/ruvector-mincut.svg)](https://crates.io/crates/ruvector-mincut) |
+| [ruvector-mincut-node](./crates/ruvector-mincut-node) | Node.js bindings for min-cut | [![crates.io](https://img.shields.io/crates/v/ruvector-mincut-node.svg)](https://crates.io/crates/ruvector-mincut-node) |
+| [ruvector-mincut-wasm](./crates/ruvector-mincut-wasm) | WASM bindings for browser min-cut | [![crates.io](https://img.shields.io/crates/v/ruvector-mincut-wasm.svg)](https://crates.io/crates/ruvector-mincut-wasm) |
+
+**First deterministic exact fully-dynamic min-cut** with verified **n^0.12 subpolynomial** update scaling:
+
+- **Brain connectivity** — Detect Alzheimer's markers by tracking neural pathway changes in milliseconds
+- **Network resilience** — Predict outages before they happen, route around failures instantly
+- **AI agent coordination** — Find communication bottlenecks in multi-agent systems
+- **Neural network pruning** — Identify which connections can be removed without losing accuracy
+- **448+ tests**, 256-core parallel optimization, 8KB per core (compile-time verified)
+
+```rust
+use ruvector_mincut::{DynamicMinCut, Graph};
+
+let mut graph = Graph::new();
+graph.add_edge(0, 1, 10.0);
+graph.add_edge(1, 2, 5.0);
+
+let mincut = DynamicMinCut::new(&graph);
+let (value, cut_edges) = mincut.compute();
+// Updates in subpolynomial time as edges change
+```
+
+### Standalone Vector Database (rvLite)
+
+| Crate | Description | crates.io |
+|-------|-------------|-----------|
+| [rvlite](./crates/rvlite) | SQLite-style vector database for browsers & edge | [![crates.io](https://img.shields.io/crates/v/rvlite.svg)](https://crates.io/crates/rvlite) |
+
+**Runs anywhere JavaScript runs** — browsers, Node.js, Deno, Bun, Cloudflare Workers, Vercel Edge:
+
+- **SQL + SPARQL + Cypher** unified query interface
+- **Zero dependencies** — thin orchestration over existing WASM crates
+- **Self-learning** via SONA ReasoningBank integration
+
+```typescript
+import { RvLite } from '@rvlite/wasm';
+
+const db = await RvLite.create();
+await db.sql(`CREATE TABLE docs (id SERIAL, embedding VECTOR(384))`);
+await db.sparql(`SELECT ?s WHERE { ?s rdf:type ex:Document }`);
+await db.cypher(`MATCH (d:Doc)-[:SIMILAR]->(r) RETURN r`);
+```
+
 ### Self-Optimizing Neural Architecture (SONA)
 
 | Crate | Description | crates.io | npm |
@@ -435,7 +488,7 @@ engine.endTrajectory(trajId, 0.95);
 |-------|-------------|-----------|-----|
 | [ruvector-postgres](./crates/ruvector-postgres) | pgvector-compatible PostgreSQL extension with SIMD optimization | [![crates.io](https://img.shields.io/crates/v/ruvector-postgres.svg)](https://crates.io/crates/ruvector-postgres) | [![npm](https://img.shields.io/npm/v/@ruvector/postgres-cli.svg)](https://www.npmjs.com/package/@ruvector/postgres-cli) |
 
-**v0.2.0** — Drop-in replacement for pgvector with **53+ SQL functions**, full **AVX-512/AVX2/NEON SIMD** acceleration (~2x faster than AVX2), HNSW and IVFFlat indexes, 39 attention mechanisms, GNN layers, hyperbolic embeddings, sparse vectors/BM25, and self-learning capabilities.
+**v0.2.0** — Drop-in replacement for pgvector with **77+ SQL functions**, full **AVX-512/AVX2/NEON SIMD** acceleration (~2x faster than AVX2), HNSW and IVFFlat indexes, 39 attention mechanisms, GNN layers, hyperbolic embeddings (Poincaré + Lorentz), sparse vectors/BM25, **W3C SPARQL 1.1** with 50+ RDF functions, **local embeddings** (6 fastembed models), and self-learning capabilities.
 
 ```bash
 # Docker (recommended)
@@ -525,6 +578,7 @@ async fn main() -> anyhow::Result<()> {
 |-------|-------------|-----------|
 | [ruvector-node](./crates/ruvector-node) | Main Node.js bindings (napi-rs) | [![crates.io](https://img.shields.io/crates/v/ruvector-node.svg)](https://crates.io/crates/ruvector-node) |
 | [ruvector-wasm](./crates/ruvector-wasm) | Main WASM bindings for browsers | [![crates.io](https://img.shields.io/crates/v/ruvector-wasm.svg)](https://crates.io/crates/ruvector-wasm) |
+| [ruvllm-wasm](./crates/ruvllm-wasm) | LLM integration WASM bindings | [![crates.io](https://img.shields.io/crates/v/ruvllm-wasm.svg)](https://crates.io/crates/ruvllm-wasm) |
 | [ruvector-cli](./crates/ruvector-cli) | Command-line interface | [![crates.io](https://img.shields.io/crates/v/ruvector-cli.svg)](https://crates.io/crates/ruvector-cli) |
 | [ruvector-server](./crates/ruvector-server) | HTTP/gRPC server | [![crates.io](https://img.shields.io/crates/v/ruvector-server.svg)](https://crates.io/crates/ruvector-server) |
 
@@ -534,8 +588,12 @@ Production-ready examples demonstrating RuVector integration patterns, from cogn
 
 | Example | Description | Type |
 |---------|-------------|------|
-| [exo-ai-2025](./examples/exo-ai-2025) | Cognitive substrate with 9 neural-symbolic crates for AI reasoning | Rust |
+| [mincut](./examples/mincut) | 6 self-organizing network demos: strange loops, time crystals, causal discovery | Rust |
+| [exo-ai-2025](./examples/exo-ai-2025) | Cognitive substrate with 9 neural-symbolic crates + 11 research experiments | Rust |
+| [ruvLLM](./examples/ruvLLM) | LLM integration patterns for RAG and AI agents | Rust |
+| [apify](./examples/apify) | 13 Apify actors: trading, memory engine, synth data, market research | npm |
 | [google-cloud](./examples/google-cloud) | GCP deployment templates for Cloud Run, GKE, and Vertex AI | Rust |
+| [ultra-low-latency-sim](./examples/ultra-low-latency-sim) | 13+ quadrillion meta-simulations/sec with SIMD | Rust |
 | [meta-cognition-spiking-neural-network](./examples/meta-cognition-spiking-neural-network) | Spiking neural network with meta-cognitive learning | npm |
 | [onnx-embeddings](./examples/onnx-embeddings) | Production ONNX embedding generation without Python | Rust |
 | [refrag-pipeline](./examples/refrag-pipeline) | RAG pipeline with vector search and document processing | Rust |
