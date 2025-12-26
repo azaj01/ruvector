@@ -154,7 +154,12 @@ impl QuantizedFfn {
     /// * `b2` - Second layer bias, shape [hidden], i32
     /// * `intermediate_buf` - Scratch buffer, shape [seq_len, intermediate], i32
     /// * `activation_buf` - Scratch buffer, shape [seq_len, intermediate], f32
+    /// * `activation_i8_buf` - Scratch buffer for quantized activations, shape [seq_len, intermediate], i8
     /// * `output` - Output buffer, shape [seq_len, hidden], i32
+    ///
+    /// # Allocation-Free Guarantee
+    ///
+    /// This function performs no heap allocations. All buffers must be pre-allocated.
     #[allow(clippy::too_many_arguments)]
     pub fn forward(
         &self,
@@ -169,6 +174,7 @@ impl QuantizedFfn {
         seq_len: usize,
         intermediate_buf: &mut [i32],
         activation_buf: &mut [f32],
+        activation_i8_buf: &mut [i8],
         output: &mut [i32],
     ) {
         let hidden = self.config.hidden;
@@ -188,7 +194,7 @@ impl QuantizedFfn {
         );
 
         // Apply activation
-        let scale = input_scale * w1_scales[0]; // Simplified scaling
+        let scale = w1_scales.get(0).copied().unwrap_or(1.0) * input_scale;
         apply_activation_i32_to_f32(
             intermediate_buf,
             scale,
@@ -196,17 +202,21 @@ impl QuantizedFfn {
             activation_buf,
         );
 
-        // Quantize back to i8 for second matmul
-        let mut activation_i8 = vec![0i8; seq_len * intermediate];
+        // Quantize back to i8 for second matmul (allocation-free)
         let activation_scale = compute_activation_scale(activation_buf);
-        quantize_f32_to_i8(activation_buf, activation_scale, &mut activation_i8);
+        let buf_len = activation_i8_buf.len().min(seq_len.saturating_mul(intermediate));
+        quantize_f32_to_i8(
+            &activation_buf[..buf_len],
+            activation_scale,
+            &mut activation_i8_buf[..buf_len],
+        );
 
         // Second linear: [seq_len, intermediate] @ [hidden, intermediate]^T -> [seq_len, hidden]
         qgemm_i8(
             seq_len,
             hidden,
             intermediate,
-            &activation_i8,
+            activation_i8_buf,
             activation_scale,
             w2,
             w2_scales,

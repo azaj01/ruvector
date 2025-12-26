@@ -5,7 +5,7 @@
 
 /// Quantized GEMM: C = A * B^T + bias
 ///
-/// Computes matrix multiplication with int8 inputs, accumulating to i32.
+/// Computes matrix multiplication with int8 inputs, accumulating to i64 for safety.
 ///
 /// # Arguments
 ///
@@ -21,44 +21,66 @@
 ///
 /// # Output
 ///
-/// out[i, j] = sum_k(a[i, k] * b[j, k]) * a_scale * b_row_scales[j] + bias[j]
+/// out[i, j] = (sum_k(a[i, k] * b[j, k]) * a_scale * b_row_scales[j]) + bias[j]
 ///
-/// Note: The output is in accumulator domain (i32). Caller is responsible
-/// for any further dequantization if needed.
+/// # Safety
+///
+/// Uses i64 accumulator to prevent overflow even with large k values.
+/// Bounds checking is performed at runtime for release builds.
 #[inline(never)]
 pub fn qgemm_i8(
     m: usize,
     n: usize,
     k: usize,
     a: &[i8],
-    _a_scale: f32,
+    a_scale: f32,
     b: &[i8],
-    _b_row_scales: &[f32],
+    b_row_scales: &[f32],
     bias: Option<&[i32]>,
     out: &mut [i32],
 ) {
-    debug_assert_eq!(a.len(), m * k);
-    debug_assert_eq!(b.len(), n * k);
-    debug_assert_eq!(out.len(), m * n);
+    // Runtime bounds checking (critical for safety)
+    if a.len() < m.saturating_mul(k)
+        || b.len() < n.saturating_mul(k)
+        || out.len() < m.saturating_mul(n)
+        || b_row_scales.len() < n {
+        // Fill with zeros on invalid dimensions rather than panicking
+        for v in out.iter_mut() {
+            *v = 0;
+        }
+        return;
+    }
 
-    // Scalar implementation (fallback)
+    // Scalar implementation with safety and scale application
     for i in 0..m {
         for j in 0..n {
-            let mut acc: i32 = 0;
+            // Use i64 accumulator to prevent overflow with large k
+            let mut acc: i64 = 0;
 
-            // Dot product
+            // Dot product with bounds-checked access
             for kk in 0..k {
-                let a_val = a[i * k + kk] as i32;
-                let b_val = b[j * k + kk] as i32;
-                acc += a_val * b_val;
+                let a_idx = i * k + kk;
+                let b_idx = j * k + kk;
+
+                // Safe indexing with fallback
+                let a_val = a.get(a_idx).copied().unwrap_or(0) as i64;
+                let b_val = b.get(b_idx).copied().unwrap_or(0) as i64;
+                acc = acc.saturating_add(a_val.saturating_mul(b_val));
             }
+
+            // Apply scale factors: acc * a_scale * b_row_scales[j]
+            let combined_scale = a_scale * b_row_scales.get(j).copied().unwrap_or(1.0);
+            let scaled_acc = (acc as f64 * combined_scale as f64).round() as i64;
 
             // Add bias if present
-            if let Some(bias) = bias {
-                acc += bias[j];
-            }
+            let bias_val = bias.and_then(|b| b.get(j)).copied().unwrap_or(0) as i64;
+            let final_acc = scaled_acc.saturating_add(bias_val);
 
-            out[i * n + j] = acc;
+            // Clamp to i32 range and store
+            let out_idx = i * n + j;
+            if let Some(out_val) = out.get_mut(out_idx) {
+                *out_val = final_acc.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            }
         }
     }
 }
@@ -105,35 +127,51 @@ pub fn qgemm_i8_simd(
 /// Quantized matrix-vector multiplication.
 ///
 /// Specialized for single-row input (common in autoregressive generation).
+///
+/// # Safety
+///
+/// Uses i64 accumulator and bounds-checked access for safety.
 #[inline]
 pub fn qgemv_i8(
     n: usize,
     k: usize,
     x: &[i8],
-    _x_scale: f32,
+    x_scale: f32,
     w: &[i8],
-    _w_row_scales: &[f32],
+    w_row_scales: &[f32],
     bias: Option<&[i32]>,
     out: &mut [i32],
 ) {
-    debug_assert_eq!(x.len(), k);
-    debug_assert_eq!(w.len(), n * k);
-    debug_assert_eq!(out.len(), n);
+    // Runtime bounds checking
+    if x.len() < k || w.len() < n.saturating_mul(k) || out.len() < n || w_row_scales.len() < n {
+        for v in out.iter_mut() {
+            *v = 0;
+        }
+        return;
+    }
 
     for j in 0..n {
-        let mut acc: i32 = 0;
+        // Use i64 accumulator for overflow safety
+        let mut acc: i64 = 0;
 
         for kk in 0..k {
-            let x_val = x[kk] as i32;
-            let w_val = w[j * k + kk] as i32;
-            acc += x_val * w_val;
+            let x_val = x.get(kk).copied().unwrap_or(0) as i64;
+            let w_val = w.get(j * k + kk).copied().unwrap_or(0) as i64;
+            acc = acc.saturating_add(x_val.saturating_mul(w_val));
         }
 
-        if let Some(bias) = bias {
-            acc += bias[j];
-        }
+        // Apply scale factors
+        let combined_scale = x_scale * w_row_scales.get(j).copied().unwrap_or(1.0);
+        let scaled_acc = (acc as f64 * combined_scale as f64).round() as i64;
 
-        out[j] = acc;
+        // Add bias
+        let bias_val = bias.and_then(|b| b.get(j)).copied().unwrap_or(0) as i64;
+        let final_acc = scaled_acc.saturating_add(bias_val);
+
+        // Store with clamping
+        if let Some(out_val) = out.get_mut(j) {
+            *out_val = final_acc.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        }
     }
 }
 

@@ -163,8 +163,8 @@ impl SpikeDrivenAttention {
                     continue;
                 }
 
-                // Accumulate membrane potential
-                membrane_potential += rate_q15 as u32;
+                // Accumulate membrane potential (saturating to prevent overflow)
+                membrane_potential = membrane_potential.saturating_add(rate_q15 as u32);
 
                 // Fire if threshold exceeded
                 if membrane_potential >= self.config.spike_threshold_q15 as u32 {
@@ -260,15 +260,18 @@ impl SpikeDrivenAttention {
     /// Compute value contribution using spike timing.
     ///
     /// Instead of multiplication, use spike count weighted by attention.
+    /// Uses saturating arithmetic to prevent overflow.
     fn spike_value_contribution(&self, v_train: &SpikeTrain, attention_weight: i32) -> i32 {
         if attention_weight == 0 {
             return 0;
         }
 
-        // Sum spike polarities weighted by attention
+        // Sum spike polarities weighted by attention (saturating to prevent overflow)
         let mut contrib = 0i32;
         for &polarity in &v_train.polarities {
-            contrib += (polarity as i32) * attention_weight;
+            contrib = contrib.saturating_add(
+                (polarity as i32).saturating_mul(attention_weight)
+            );
         }
 
         contrib

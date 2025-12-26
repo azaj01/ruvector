@@ -28,7 +28,7 @@ fn bench_gate_evaluation(c: &mut Criterion) {
     group.bench_function("allow", |b| {
         b.iter(|| {
             let decision = controller.evaluate(black_box(&gate_allow), None);
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -45,7 +45,7 @@ fn bench_gate_evaluation(c: &mut Criterion) {
     group.bench_function("reduce_scope", |b| {
         b.iter(|| {
             let decision = controller.evaluate(black_box(&gate_reduce), None);
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -62,7 +62,7 @@ fn bench_gate_evaluation(c: &mut Criterion) {
     group.bench_function("flush_kv", |b| {
         b.iter(|| {
             let decision = controller.evaluate(black_box(&gate_flush), None);
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -79,7 +79,7 @@ fn bench_gate_evaluation(c: &mut Criterion) {
     group.bench_function("quarantine", |b| {
         b.iter(|| {
             let decision = controller.evaluate(black_box(&gate_quarantine), None);
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -112,7 +112,7 @@ fn bench_gate_with_spikes(c: &mut Criterion) {
     group.bench_function("with_active_spike", |b| {
         b.iter(|| {
             let decision = controller.evaluate(black_box(&gate), Some(black_box(&spike_active)));
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -125,7 +125,7 @@ fn bench_gate_with_spikes(c: &mut Criterion) {
     group.bench_function("with_inactive_spike", |b| {
         b.iter(|| {
             let decision = controller.evaluate(black_box(&gate), Some(black_box(&spike_inactive)));
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -140,7 +140,7 @@ fn bench_gate_with_spikes(c: &mut Criterion) {
     group.bench_function("with_storm_spike", |b| {
         b.iter(|| {
             let decision = controller.evaluate(black_box(&gate), Some(black_box(&spike_storm)));
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -166,21 +166,21 @@ fn bench_spike_scheduler(c: &mut Criterion) {
     group.bench_function("evaluate_active", |b| {
         b.iter(|| {
             let decision = scheduler.evaluate(black_box(&spike_active));
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
     group.bench_function("build_sparse_mask", |b| {
         b.iter(|| {
             let mask = scheduler.build_sparse_mask(black_box(&spike_active), 64);
-            black_box(&mask)
+            black_box(mask)
         })
     });
 
     group.bench_function("get_weighted_positions", |b| {
         b.iter(|| {
             let positions = scheduler.get_weighted_positions(black_box(&spike_active));
-            black_box(&positions)
+            black_box(positions)
         })
     });
 
@@ -205,7 +205,7 @@ fn bench_policy_variants(c: &mut Criterion) {
     group.bench_function("default_policy", |b| {
         b.iter(|| {
             let decision = default_controller.evaluate(black_box(&gate), None);
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -215,7 +215,7 @@ fn bench_policy_variants(c: &mut Criterion) {
     group.bench_function("conservative_policy", |b| {
         b.iter(|| {
             let decision = conservative_controller.evaluate(black_box(&gate), None);
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -225,7 +225,7 @@ fn bench_policy_variants(c: &mut Criterion) {
     group.bench_function("permissive_policy", |b| {
         b.iter(|| {
             let decision = permissive_controller.evaluate(black_box(&gate), None);
-            black_box(&decision)
+            black_box(decision)
         })
     });
 
@@ -248,7 +248,7 @@ fn bench_drop_ratio_calculation(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     let ratio = black_box(&gate).drop_ratio_q15();
-                    black_box(&ratio)
+                    black_box(ratio)
                 })
             },
         );

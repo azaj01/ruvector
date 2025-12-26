@@ -188,7 +188,13 @@ impl MincutSparseAttention {
             gate,
         );
 
-        let actual_density = positions.len() as f32 / (seq_len * (seq_len + 1) / 2) as f32;
+        // Compute actual density (guard against division by zero)
+        let full_positions = seq_len.saturating_mul(seq_len.saturating_add(1)) / 2;
+        let actual_density = if full_positions > 0 {
+            positions.len() as f32 / full_positions as f32
+        } else {
+            0.0
+        };
 
         SparseMask {
             positions,

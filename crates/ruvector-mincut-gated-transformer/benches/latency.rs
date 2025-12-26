@@ -20,6 +20,8 @@ fn bench_tier0_inference(c: &mut Criterion) {
     for seq_len in [16, 32, 64].iter() {
         let mut config = TransformerConfig::baseline();
         config.seq_len_max = *seq_len;
+        config.seq_len_degraded = seq_len / 2;
+        config.seq_len_safe = seq_len / 8;
         let mut transformer = create_transformer(config.clone());
 
         let gate = GatePacket {
@@ -42,7 +44,7 @@ fn bench_tier0_inference(c: &mut Criterion) {
                 b.iter(|| {
                     let mut output = InferOutput::new(&mut logits);
                     transformer.infer(black_box(&input), &mut output).unwrap();
-                    black_box(&output.witness)
+                    black_box(output.witness)
                 })
             },
         );
@@ -75,7 +77,7 @@ fn bench_tier1_degraded(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -106,7 +108,7 @@ fn bench_tier2_safe(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -134,7 +136,7 @@ fn bench_tier3_skip(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -166,7 +168,7 @@ fn bench_spike_inactive_skip(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -200,7 +202,7 @@ fn bench_window_sizes(c: &mut Criterion) {
                 b.iter(|| {
                     let mut output = InferOutput::new(&mut logits);
                     transformer.infer(black_box(&input), &mut output).unwrap();
-                    black_box(&output.witness)
+                    black_box(output.witness)
                 })
             },
         );
@@ -230,7 +232,7 @@ fn bench_micro_config(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -261,7 +263,7 @@ fn bench_mod_routing_overhead(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -281,7 +283,7 @@ fn bench_mod_routing_overhead(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -312,7 +314,7 @@ fn bench_early_exit_speedup(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -332,7 +334,7 @@ fn bench_early_exit_speedup(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -352,7 +354,7 @@ fn bench_early_exit_speedup(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -383,7 +385,7 @@ fn bench_sparse_vs_dense_attention(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -403,7 +405,7 @@ fn bench_sparse_vs_dense_attention(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -433,7 +435,7 @@ fn bench_spike_vs_standard_attention(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -454,7 +456,7 @@ fn bench_spike_vs_standard_attention(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -475,7 +477,7 @@ fn bench_spike_vs_standard_attention(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -506,7 +508,7 @@ fn bench_lambda_drop_patterns(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -526,7 +528,7 @@ fn bench_lambda_drop_patterns(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -558,7 +560,7 @@ fn bench_policy_variants(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -572,7 +574,7 @@ fn bench_policy_variants(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
@@ -586,7 +588,7 @@ fn bench_policy_variants(c: &mut Criterion) {
         b.iter(|| {
             let mut output = InferOutput::new(&mut logits);
             transformer.infer(black_box(&input), &mut output).unwrap();
-            black_box(&output.witness)
+            black_box(output.witness)
         })
     });
 
