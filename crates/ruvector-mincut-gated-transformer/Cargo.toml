@@ -64,6 +64,10 @@ harness = false
 name = "gate"
 harness = false
 
+[[bench]]
+name = "kernel"
+harness = false
+
 [[example]]
 name = "scorer"
 path = "examples/scorer.rs"
