@@ -42,6 +42,10 @@ pub mod workers;
 #[cfg(feature = "embeddings")]
 pub mod embeddings;
 
+// Optional: Mincut-gated transformer (requires 'gated-transformer' feature)
+#[cfg(feature = "gated-transformer")]
+pub mod gated_transformer;
+
 // Re-exports for convenience
 pub use distance::{cosine_distance, euclidean_distance, inner_product_distance, DistanceMetric};
 pub use types::RuVector;
@@ -212,7 +216,7 @@ fn scalar_quantize_arr(v: Vec<f32>) -> pgrx::JsonB {
 // Tests
 // ============================================================================
 
-#[cfg(any(test, feature = "pg_test"))]
+#[cfg(feature = "pg_test")]
 #[pg_schema]
 mod tests {
     use super::*;

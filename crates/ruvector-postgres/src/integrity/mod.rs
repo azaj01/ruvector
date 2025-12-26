@@ -110,6 +110,27 @@ pub fn get_integrity_manager() -> Arc<RwLock<IntegrityManager>> {
         .clone()
 }
 
+// Submodule exports
+pub mod contracted_graph;
+pub mod events;
+pub mod gating;
+pub mod mincut;
+
+pub use mincut::{MincutConfig, MincutResult, WitnessEdge};
+
+/// Get current mincut for an index (used by gated_transformer module)
+pub fn get_current_mincut(_index_name: &str) -> Result<MincutResult, String> {
+    // TODO: Implement actual index mincut lookup
+    // For now, return a default result
+    Ok(MincutResult {
+        lambda_cut: 10.0,
+        lambda2: None,
+        witness_edges: vec![],
+        cut_partition: vec![],
+        computation_time_ms: 0,
+    })
+}
+
 pub fn stoer_wagner_mincut(n: usize, edges: &[(usize, usize, f64)]) -> f64 {
     if n <= 1 || edges.is_empty() {
         return 0.0;
@@ -220,7 +241,7 @@ fn ruvector_mincut(n: i32, edges_json: pgrx::JsonB) -> f64 {
     stoer_wagner_mincut(n as usize, &edges)
 }
 
-#[cfg(any(test, feature = "pg_test"))]
+#[cfg(feature = "pg_test")]
 #[pg_schema]
 mod tests {
     use super::*;
