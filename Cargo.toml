@@ -33,6 +33,7 @@ members = [
     "crates/ruvector-mincut",
     "crates/ruvector-mincut-wasm",
     "crates/ruvector-mincut-node",
+    "crates/ruvector-mincut-gated-transformer",
     "crates/ruvector-postgres",
     "examples/refrag-pipeline",
     "examples/scipix",

@@ -6674,6 +6674,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-mincut-gated-transformer"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "getrandom 0.2.16",
+ "proptest",
+ "rand 0.8.5",
+ "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "ruvector-mincut-node"
 version = "0.1.29"
 dependencies = [
