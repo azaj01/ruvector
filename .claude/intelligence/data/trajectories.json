@@ -1,173 +1,5 @@
 [
   {
-    "id": "pretrain-cmd-7432",
-    "state": "other_in_general",
-    "action": "command-succeeded",
-    "outcome": "cp /workspaces/ruvector/target/release/libruvector_node.so /workspaces/ruvector/crates/ruvector-node",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:07:33.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7433",
-    "state": "test_in_general",
-    "action": "command-succeeded",
-    "outcome": "find /workspaces/ruvector/npm/tests -type f -name \"*.test.js\" -exec wc -l {} + | tail -1",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:07:24.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7434",
-    "state": "test_in_general",
-    "action": "command-succeeded",
-    "outcome": "find /workspaces/ruvector/npm/tests -type f -name \"*.js\" -o -name \"*.md\" | wc -l",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:07:14.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7435",
-    "state": "build_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/crates/ruvector-node && npm run build:debug 2>&1 | tail -50",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:07:13.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7436",
-    "state": "test_in_general",
-    "action": "command-succeeded",
-    "outcome": "ls -lah /workspaces/ruvector/npm/tests/",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:06:54.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7437",
-    "state": "test_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/npm/packages/ruvector && wc -l src/*.ts dist/*.js bin/*.js test/*.js example",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:06:36.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7438",
-    "state": "other_in_general",
-    "action": "command-succeeded",
-    "outcome": "find /workspaces/ruvector/target/release -name \"*ruvector_node*\" -o -name \"*libruvector*node*\" 2>/de",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:06:22.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7439",
-    "state": "build_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/crates/ruvector-node && cargo build --lib --release 2>&1 | tail -150",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:05:46.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7440",
-    "state": "other_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/npm/packages/ruvector && node examples/api-usage.js",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:05:10.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7441",
-    "state": "other_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/npm/packages/ruvector && tree -L 2 -I 'node_modules'",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:04:32.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7442",
-    "state": "other_in_general",
-    "action": "command-succeeded",
-    "outcome": "chmod +x /workspaces/ruvector/npm/packages/ruvector/examples/*.{sh,js} && cd /workspaces/ruvector/np",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:04:12.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7443",
-    "state": "test_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/npm/ruvector && npm test 2>&1 | head -100",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:03:52.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7444",
-    "state": "other_in_general",
-    "action": "command-succeeded",
-    "outcome": "ls -la /workspaces/ruvector/npm/packages/ 2>&1 || echo \"packages dir not found\"",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:03:36.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7445",
-    "state": "build_in_wasm",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/crates/ruvector-wasm && cargo update && wasm-pack build --target nodejs --ou",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:03:26.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7446",
-    "state": "test_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/npm && node tests/run-all-tests.js --only=unit 2>&1 | head -200",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:03:13.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7447",
-    "state": "cargo_in_general",
-    "action": "command-succeeded",
-    "outcome": "cargo build -p ruvector-node --lib 2>&1 | tail -100",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:02:51.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7448",
-    "state": "build_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/crates/ruvector-node && cargo build --lib 2>&1 | grep -A 5 \"error\\[E\"",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:02:34.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7449",
-    "state": "test_in_general",
-    "action": "command-succeeded",
-    "outcome": "chmod +x /workspaces/ruvector/npm/tests/run-all-tests.js",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:02:31.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7450",
-    "state": "test_in_general",
-    "action": "command-succeeded",
-    "outcome": "cd /workspaces/ruvector/npm/packages/ruvector && node test/standalone-test.js",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:02:31.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7451",
-    "state": "cargo_in_general",
-    "action": "command-succeeded",
-    "outcome": "cargo tree -i getrandom@0.3.4 2>&1 | grep -v \"warning:\" | head -30",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:01:11.000Z"
-  },
-  {
-    "id": "pretrain-cmd-7452",
-    "state": "cargo_in_ruvector-core",
-    "action": "command-succeeded",
-    "outcome": "cargo build -p ruvector-core --release 2>&1 | tail -50",
-    "reward": 1,
-    "timestamp": "2025-11-21T03:00:54.000Z"
-  },
-  {
     "id": "pretrain-cmd-7453",
     "state": "other_in_wasm",
     "action": "command-succeeded",
@@ -8070,6 +7902,195 @@
     "outcome": "git checkout -- .claude/intelligence/data/*.json",
     "reward": -0.5,
     "timestamp": "2025-12-26T16:40:15.774Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766781317325",
+    "state": "git_in_general",
+    "action": "command-failed",
+    "outcome": "git checkout --force -- .claude/intelligence/data/ examples/ruvLLM/ && git status --short",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:35:17.325Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766781335231",
+    "state": "git_in_general",
+    "action": "command-failed",
+    "outcome": "git add .github/workflows/ruvector-postgres-ci.yml crates/ruvector-postgres/src/attention/operators.",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:35:35.231Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766781352078",
+    "state": "git_in_general",
+    "action": "command-failed",
+    "outcome": "git push origin fix/ci-build-issues",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:35:52.078Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766781410990",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "sleep 30 && gh run list --workflow=ruvector-postgres-ci.yml --limit=2 --json status,conclusion,displ",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:36:50.990Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766781610563",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "sleep 180 && gh run view 20529011543 --json status,jobs | jq '{status: .status, jobs: [.jobs[] | {na",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:40:10.563Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766781929893",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "sleep 300 && gh run view 20529011543 --json status,jobs | jq '{status: .status, jobs: [.jobs[] | {na",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:45:29.893Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766781949029",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "gh run view 20529011543 --log 2>&1 | grep -A 20 \"Test PG16 (macos-latest)\" | grep -E \"(error|Error|f",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:45:49.029Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766781967051",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "gh run view 20529011543 --log-failed 2>&1 | head -150",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:46:07.051Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782285266",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "sleep 300 && gh run view 20529011543 --json status,jobs | jq '{status: .status, jobs: [.jobs[] | {na",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:51:25.266Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782304449",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "gh run view 20529011543 --log-failed 2>&1 | grep -E \"(error\\[|error:|undefined symbol|linker)\" | hea",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:51:44.449Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782321820",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "gh run view 20529011543 --log-failed 2>&1 | grep -B 5 -A 15 \"E0308\" | head -150",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:52:01.820Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782355086",
+    "state": "edit_rs_in_ruvector-postgres",
+    "action": "successful-edit",
+    "outcome": "completed",
+    "reward": 1,
+    "timestamp": "2025-12-26T20:52:35.086Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782364767",
+    "state": "edit_rs_in_ruvector-postgres",
+    "action": "successful-edit",
+    "outcome": "completed",
+    "reward": 1,
+    "timestamp": "2025-12-26T20:52:44.767Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782376684",
+    "state": "edit_rs_in_ruvector-postgres",
+    "action": "successful-edit",
+    "outcome": "completed",
+    "reward": 1,
+    "timestamp": "2025-12-26T20:52:56.685Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782389292",
+    "state": "edit_rs_in_ruvector-postgres",
+    "action": "successful-edit",
+    "outcome": "completed",
+    "reward": 1,
+    "timestamp": "2025-12-26T20:53:09.292Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782410186",
+    "state": "git_in_general",
+    "action": "command-failed",
+    "outcome": "git add crates/ruvector-postgres/src/learning/operators.rs crates/ruvector-postgres/src/tenancy/mod.",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:53:30.186Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782427406",
+    "state": "git_in_general",
+    "action": "command-failed",
+    "outcome": "git push origin fix/ci-build-issues",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:53:47.406Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782517138",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "sleep 60 && gh run list --workflow=ruvector-postgres-ci.yml --limit=2 --json status,conclusion,displ",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:55:17.138Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782537981",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "gh run view 20529249653 --log-failed 2>&1 | grep -E \"(error\\[|error:|-->)\" | head -50",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:55:37.981Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782556380",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "gh run view 20529249653 --log-failed 2>&1 | tail -200",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:55:56.380Z",
+    "abGroup": "treatment"
+  },
+  {
+    "id": "traj-1766782574862",
+    "state": "other_in_general",
+    "action": "command-failed",
+    "outcome": "cd crates/ruvector-postgres && cargo fmt",
+    "reward": -0.5,
+    "timestamp": "2025-12-26T20:56:14.862Z",
     "abGroup": "treatment"
   }
 ]

@@ -11,6 +11,16 @@
       "source": "crates/micro-hnsw-wasm/src/lib.rs",
       "test": "crates/micro-hnsw-wasm/tests/lib.test.rs",
       "editCount": 1
+    },
+    "crates/ruvector-postgres/src/learning/operators.rs|crates/ruvector-postgres/tests/learning/operators.test.rs": {
+      "source": "crates/ruvector-postgres/src/learning/operators.rs",
+      "test": "crates/ruvector-postgres/tests/learning/operators.test.rs",
+      "editCount": 2
+    },
+    "crates/ruvector-postgres/src/tenancy/mod.rs|crates/ruvector-postgres/tests/tenancy/mod.test.rs": {
+      "source": "crates/ruvector-postgres/src/tenancy/mod.rs",
+      "test": "crates/ruvector-postgres/tests/tenancy/mod.test.rs",
+      "editCount": 2
     }
   }
 }

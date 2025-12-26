@@ -593,12 +593,7 @@ mod tests {
 
     #[pg_test]
     fn test_tenant_column_sql_generation() {
-        let sql = ruvector_generate_tenant_column_sql(
-            "embeddings",
-            "tenant_id",
-            true,
-            true,
-        );
+        let sql = ruvector_generate_tenant_column_sql("embeddings", "tenant_id", true, true);
         assert!(sql.contains("ADD COLUMN"));
         assert!(sql.contains("tenant_id"));
     }
