@@ -14,7 +14,8 @@ use std::time::{Duration, SystemTime};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
-use super::detector::{Problem, ProblemType};
+#[cfg_attr(not(test), allow(unused_imports))]
+use super::detector::{Problem, ProblemType, Severity};
 
 // ============================================================================
 // Remediation Result

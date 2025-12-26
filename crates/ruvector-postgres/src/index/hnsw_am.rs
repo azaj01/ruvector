@@ -1619,6 +1619,7 @@ static HNSW_AM_HANDLER: IndexAmRoutine = IndexAmRoutine {
     amcanparallel: true, // Supports parallel scan
     amcaninclude: false,
     amusemaintenanceworkmem: true,
+    #[cfg(any(feature = "pg16", feature = "pg17"))]
     amsummarizing: false,
     amparallelvacuumoptions: pg_sys::VACUUM_OPTION_PARALLEL_COND_CLEANUP as u8,
 

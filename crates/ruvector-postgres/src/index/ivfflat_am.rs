@@ -1755,6 +1755,7 @@ static IVFFLAT_AM_HANDLER: IndexAmRoutine = IndexAmRoutine {
     amcanparallel: true, // Supports parallel scan
     amcaninclude: false,
     amusemaintenanceworkmem: true,
+    #[cfg(any(feature = "pg16", feature = "pg17"))]
     amsummarizing: false,
     amparallelvacuumoptions: 0,
 
