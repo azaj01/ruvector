@@ -2,16 +2,20 @@
 
 Complete command-line reference for the RuVector hooks system.
 
+> **Implementation Status**
+> - **Working NOW**: `.claude/intelligence/cli.js` (Node.js)
+> - **Planned**: `npx ruvector hooks` (Rust CLI - see [Implementation Plan](IMPLEMENTATION_PLAN.md))
+
 ## Synopsis
 
+**Current (Node.js):**
 ```bash
-npx ruvector hooks <command> [options]
+node .claude/intelligence/cli.js <command> [args]
 ```
 
-Or with global installation:
-
+**Planned (Rust CLI):**
 ```bash
-ruvector hooks <command> [options]
+npx ruvector hooks <command> [options]
 ```
 
 ---
