@@ -582,7 +582,7 @@ The hooks integrate with Claude Code's event system:
 
 | Crate/Package | Description | Status |
 |---------------|-------------|--------|
-| [ruvector-cli hooks](./crates/ruvector-cli) | Rust CLI with 31 hooks commands | [![crates.io](https://img.shields.io/crates/v/ruvector-cli.svg)](https://crates.io/crates/ruvector-cli) |
+| [ruvector-cli hooks](./crates/ruvector-cli) | Rust CLI with 34 hooks commands | [![crates.io](https://img.shields.io/crates/v/ruvector-cli.svg)](https://crates.io/crates/ruvector-cli) |
 | [@ruvector/cli hooks](./npm/packages/cli) | npm CLI with 26 hooks commands | [![npm](https://img.shields.io/npm/v/@ruvector/cli.svg)](https://www.npmjs.com/package/@ruvector/cli) |
 
 #### Quick Start
@@ -652,6 +652,11 @@ ruvector hooks post-command <cmd> --success  # Post-command hook
 ruvector hooks suggest-context           # UserPromptSubmit context injection
 ruvector hooks track-notification        # Track notification patterns
 ruvector hooks pre-compact [--auto]      # Pre-compact hook (auto/manual)
+
+# Claude Code v2.0.55+ Features
+ruvector hooks lsp-diagnostic --file <f> --severity error  # LSP diagnostics
+ruvector hooks suggest-ultrathink "complex task"  # Recommend extended reasoning
+ruvector hooks async-agent --action spawn --agent-id <id>  # Async sub-agents
 
 # Intelligence
 ruvector hooks record-error <cmd> <stderr>  # Record error pattern
