@@ -288,6 +288,16 @@ async fn main() -> Result<()> {
                 HooksCommands::TrackNotification { notification_type } => {
                     cli::hooks::track_notification_cmd(notification_type.as_deref(), &config)
                 }
+                // Claude Code v2.0.55+ features
+                HooksCommands::LspDiagnostic { file, severity, message } => {
+                    cli::hooks::lsp_diagnostic_cmd(file.as_deref(), severity.as_deref(), message.as_deref(), &config)
+                }
+                HooksCommands::SuggestUltrathink { task, file } => {
+                    cli::hooks::suggest_ultrathink_cmd(&task.join(" "), file.as_deref(), &config)
+                }
+                HooksCommands::AsyncAgent { action, agent_id, task } => {
+                    cli::hooks::async_agent_cmd(&action, agent_id.as_deref(), task.as_deref(), &config)
+                }
                 HooksCommands::RecordError { command, stderr } => {
                     cli::hooks::record_error_cmd(&command, &stderr, &config)
                 }

@@ -270,6 +270,47 @@ pub enum HooksCommands {
         notification_type: Option<String>,
     },
 
+    // === Claude Code v2.0.55+ Features ===
+    /// Process LSP diagnostic events (requires Claude Code 2.0.55+)
+    LspDiagnostic {
+        /// File with diagnostic
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Diagnostic severity (error, warning, info, hint)
+        #[arg(long)]
+        severity: Option<String>,
+
+        /// Diagnostic message
+        #[arg(long)]
+        message: Option<String>,
+    },
+
+    /// Recommend ultrathink mode for complex tasks
+    SuggestUltrathink {
+        /// Task description
+        task: Vec<String>,
+
+        /// File being worked on
+        #[arg(long)]
+        file: Option<String>,
+    },
+
+    /// Coordinate async sub-agent execution
+    AsyncAgent {
+        /// Agent action (spawn, sync, complete)
+        #[arg(long, default_value = "spawn")]
+        action: String,
+
+        /// Agent ID
+        #[arg(long)]
+        agent_id: Option<String>,
+
+        /// Task description
+        #[arg(long)]
+        task: Option<String>,
+    },
+
     // === V3 Intelligence Features ===
     /// Record error pattern for learning
     RecordError {
@@ -1130,6 +1171,11 @@ pub fn init_hooks(force: bool, postgres: bool, _config: &Config) -> Result<()> {
                     "type": "command",
                     "command": "ruvector hooks swarm-recommend \"$TOOL_INPUT_SUBAGENT_TYPE\"",
                     "timeout": 2000
+                }, {
+                    // Claude Code v2.0.55+: Register async sub-agent
+                    "type": "command",
+                    "command": "ruvector hooks async-agent --action spawn --agent-id \"$TOOL_INPUT_SUBAGENT_TYPE\" --task \"$TOOL_INPUT_PROMPT\"",
+                    "timeout": 1000
                 }]
             }],
             // Post-tool hooks: record outcomes for learning
@@ -1146,6 +1192,22 @@ pub fn init_hooks(force: bool, postgres: bool, _config: &Config) -> Result<()> {
                     "type": "command",
                     "command": "ruvector hooks post-command \"$TOOL_INPUT_COMMAND\" --success=$TOOL_STATUS",
                     "timeout": 3000
+                }]
+            }, {
+                // Claude Code v2.0.55+: LSP diagnostics integration
+                "matcher": "LSP",
+                "hooks": [{
+                    "type": "command",
+                    "command": "ruvector hooks lsp-diagnostic --file \"$TOOL_INPUT_FILE\" --severity \"$TOOL_INPUT_SEVERITY\" --message \"$TOOL_INPUT_MESSAGE\"",
+                    "timeout": 2000
+                }]
+            }, {
+                // Claude Code v2.0.55+: Async sub-agent completion tracking
+                "matcher": "Task",
+                "hooks": [{
+                    "type": "command",
+                    "command": "ruvector hooks async-agent --action complete --agent-id \"$TOOL_INPUT_SUBAGENT_TYPE\"",
+                    "timeout": 2000
                 }]
             }],
             // Session lifecycle hooks
@@ -1789,6 +1851,183 @@ pub fn swarm_stats_cmd(_config: &Config) -> Result<()> {
         "average_success_rate": avg_success,
         "topology": "mesh"
     }))?);
+
+    Ok(())
+}
+
+// === Claude Code v2.0.55+ Feature Commands ===
+
+/// Process LSP diagnostic events
+pub fn lsp_diagnostic_cmd(
+    file: Option<&str>,
+    severity: Option<&str>,
+    message: Option<&str>,
+    _config: &Config,
+) -> Result<()> {
+    let mut intel = Intelligence::new(get_intelligence_path());
+
+    // Parse stdin for full diagnostic info
+    let stdin_input = try_parse_stdin();
+
+    let file = file
+        .or_else(|| stdin_input.as_ref().and_then(|i| i.tool_input.as_ref()
+            .and_then(|t| t.get("file").and_then(|f| f.as_str()))))
+        .unwrap_or("unknown");
+
+    let severity = severity.unwrap_or("error");
+    let message = message.unwrap_or("");
+
+    // Learn from diagnostic patterns
+    let state = format!("lsp:{}:{}", severity, file.split('/').last().unwrap_or(file));
+    intel.learn(&state, "diagnostic", severity, if severity == "error" { -0.5 } else { 0.0 });
+    intel.save()?;
+
+    // Output JSON for context injection
+    if severity == "error" {
+        let output = HookOutput {
+            hook_specific_output: Some(HookSpecificOutput {
+                additional_context: Some(format!(
+                    "LSP reports {} in {}: {}. Consider fixing before proceeding.",
+                    severity, file, message
+                )),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        println!("{}", serde_json::to_string(&output)?);
+    }
+
+    Ok(())
+}
+
+/// Recommend ultrathink mode for complex tasks
+pub fn suggest_ultrathink_cmd(task: &str, file: Option<&str>, _config: &Config) -> Result<()> {
+    let intel = Intelligence::new(get_intelligence_path());
+
+    // Complexity indicators that suggest ultrathink
+    let complexity_patterns = [
+        ("algorithm", 0.8),
+        ("optimize", 0.7),
+        ("refactor", 0.6),
+        ("debug", 0.7),
+        ("performance", 0.7),
+        ("concurrent", 0.8),
+        ("async", 0.6),
+        ("architecture", 0.8),
+        ("security", 0.7),
+        ("cryptograph", 0.9),
+        ("distributed", 0.8),
+        ("consensus", 0.9),
+        ("neural", 0.8),
+        ("ml", 0.7),
+        ("complex", 0.6),
+    ];
+
+    let task_lower = task.to_lowercase();
+    let mut complexity_score = 0.0;
+    let mut matched_patterns = Vec::new();
+
+    for (pattern, weight) in complexity_patterns {
+        if task_lower.contains(pattern) {
+            complexity_score += weight;
+            matched_patterns.push(pattern);
+        }
+    }
+
+    // Check file extension for inherent complexity
+    if let Some(f) = file {
+        if f.ends_with(".rs") || f.ends_with(".cpp") || f.ends_with(".go") {
+            complexity_score += 0.2;
+        }
+    }
+
+    // Check learned patterns
+    let state = format!("task:{}", task_lower.split_whitespace().next().unwrap_or("unknown"));
+    let (_, q_value) = intel.suggest(&state, &["ultrathink".to_string(), "normal".to_string()]);
+    if q_value > 0.5 {
+        complexity_score += 0.3;
+    }
+
+    let recommend_ultrathink = complexity_score >= 0.6;
+
+    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+        "task": task,
+        "complexity_score": complexity_score,
+        "recommend_ultrathink": recommend_ultrathink,
+        "matched_patterns": matched_patterns,
+        "suggestion": if recommend_ultrathink {
+            "Consider using 'ultrathink' for this complex task"
+        } else {
+            "Standard reasoning should suffice"
+        }
+    }))?);
+
+    Ok(())
+}
+
+/// Coordinate async sub-agent execution
+pub fn async_agent_cmd(
+    action: &str,
+    agent_id: Option<&str>,
+    task: Option<&str>,
+    _config: &Config,
+) -> Result<()> {
+    let mut intel = Intelligence::new(get_intelligence_path());
+
+    match action {
+        "spawn" => {
+            let default_id = format!("async-{}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis());
+            let agent_id = agent_id.unwrap_or(&default_id);
+            let task = task.unwrap_or("unknown");
+
+            // Register async agent
+            intel.swarm_register(agent_id, "async-subagent", vec!["parallel".to_string()]);
+            intel.learn(&format!("async:{}", agent_id), "spawned", "active", 0.0);
+            intel.save()?;
+
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                "action": "spawn",
+                "agent_id": agent_id,
+                "task": task,
+                "status": "spawned",
+                "coordination": "async"
+            }))?);
+        }
+        "sync" => {
+            // Record coordination between async agents
+            if let Some(id) = agent_id {
+                intel.learn(&format!("async:{}", id), "sync", "waiting", 0.1);
+                intel.save()?;
+
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "action": "sync",
+                    "agent_id": id,
+                    "status": "synchronizing"
+                }))?);
+            }
+        }
+        "complete" => {
+            if let Some(id) = agent_id {
+                intel.learn(&format!("async:{}", id), "complete", "finished", 1.0);
+                intel.save()?;
+
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "action": "complete",
+                    "agent_id": id,
+                    "status": "completed",
+                    "reward": 1.0
+                }))?);
+            }
+        }
+        _ => {
+            println!("{}", serde_json::json!({
+                "error": format!("Unknown action: {}. Use spawn, sync, or complete.", action)
+            }));
+        }
+    }
 
     Ok(())
 }
