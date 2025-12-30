@@ -3628,4 +3628,59 @@ ${focus.description}` : null
     console.log(chalk.dim(`\nFocus mode "${opts.focus}": ${focus.description}`));
   });
 
+// MCP Server command
+const mcpCmd = program.command('mcp').description('MCP (Model Context Protocol) server for Claude Code integration');
+
+mcpCmd.command('start')
+  .description('Start the RuVector MCP server')
+  .action(() => {
+    // Execute the mcp-server.js directly
+    const mcpServerPath = path.join(__dirname, 'mcp-server.js');
+    if (!fs.existsSync(mcpServerPath)) {
+      console.error(chalk.red('Error: MCP server not found at'), mcpServerPath);
+      process.exit(1);
+    }
+    require(mcpServerPath);
+  });
+
+mcpCmd.command('info')
+  .description('Show MCP server information and setup instructions')
+  .action(() => {
+    console.log(chalk.bold.cyan('\n🔌 RuVector MCP Server\n'));
+    console.log(chalk.white('The RuVector MCP server provides self-learning intelligence'));
+    console.log(chalk.white('tools to Claude Code via the Model Context Protocol.\n'));
+
+    console.log(chalk.bold('Available Tools:'));
+    console.log(chalk.dim('  hooks_stats      - Get intelligence statistics'));
+    console.log(chalk.dim('  hooks_route      - Route task to best agent'));
+    console.log(chalk.dim('  hooks_remember   - Store context in vector memory'));
+    console.log(chalk.dim('  hooks_recall     - Search vector memory'));
+    console.log(chalk.dim('  hooks_init       - Initialize hooks in project'));
+    console.log(chalk.dim('  hooks_pretrain   - Pretrain from repository'));
+    console.log(chalk.dim('  hooks_build_agents - Generate agent configs'));
+    console.log(chalk.dim('  hooks_verify     - Verify hooks configuration'));
+    console.log(chalk.dim('  hooks_doctor     - Diagnose setup issues'));
+    console.log(chalk.dim('  hooks_export     - Export intelligence data'));
+
+    console.log(chalk.bold('\n📦 Resources:'));
+    console.log(chalk.dim('  ruvector://intelligence/stats     - Current statistics'));
+    console.log(chalk.dim('  ruvector://intelligence/patterns  - Learned patterns'));
+    console.log(chalk.dim('  ruvector://intelligence/memories  - Vector memories'));
+
+    console.log(chalk.bold.yellow('\n⚙️  Setup Instructions:\n'));
+    console.log(chalk.white('Add to Claude Code:'));
+    console.log(chalk.cyan('  claude mcp add ruvector npx ruvector mcp start\n'));
+
+    console.log(chalk.white('Or add to .claude/settings.json:'));
+    console.log(chalk.dim(`  {
+    "mcpServers": {
+      "ruvector": {
+        "command": "npx",
+        "args": ["ruvector", "mcp", "start"]
+      }
+    }
+  }`));
+    console.log();
+  });
+
 program.parse();
