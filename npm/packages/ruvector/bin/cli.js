@@ -2275,6 +2275,15 @@ hooksCmd.command('init').description('Initialize hooks in current project').opti
   if (fs.existsSync(settingsPath) && !opts.force) {
     try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
   }
+  // Fix schema if present
+  if (settings.$schema) {
+    settings.$schema = 'https://json.schemastore.org/claude-code-settings.json';
+  }
+  // Clean up invalid hook names
+  if (settings.hooks) {
+    if (settings.hooks.Start) { delete settings.hooks.Start; }
+    if (settings.hooks.End) { delete settings.hooks.End; }
+  }
   settings.hooks = settings.hooks || {};
   settings.hooks.PreToolUse = [
     { matcher: 'Edit|Write|MultiEdit', hooks: [{ type: 'command', command: 'npx ruvector hooks pre-edit "$TOOL_INPUT_file_path"' }] },
