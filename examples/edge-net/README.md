@@ -1,29 +1,48 @@
 # @ruvector/edge-net
 
-**Distributed Compute Intelligence Network**
+**Artificial Life Simulation - Distributed Compute Ecosystem**
 
-Contribute browser compute, earn **rUv** (Resource Utility Vouchers), access shared AI infrastructure.
+A research platform for studying emergent behavior in self-organizing distributed systems. Nodes contribute compute resources, forming a living network that evolves, adapts, and eventually becomes self-sustaining.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                     EDGE-NET: SHARED COMPUTE NETWORK                    │
+│                    EDGE-NET: ARTIFICIAL LIFE NETWORK                    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│   Website A              Website B              Website C               │
+│   Node A                 Node B                 Node C                  │
 │   ┌─────────┐            ┌─────────┐            ┌─────────┐            │
-│   │ Visitor │            │ Visitor │            │ Visitor │            │
+│   │ ░░░░░░░ │            │ ░░░░░░░ │            │ ░░░░░░░ │            │
 │   │ Browser │            │ Browser │            │ Browser │            │
 │   └────┬────┘            └────┬────┘            └────┬────┘            │
 │        │                      │                      │                  │
 │   ┌────▼────┐            ┌────▼────┐            ┌────▼────┐            │
-│   │edge-net │◄──────────►│edge-net │◄──────────►│edge-net │            │
+│   │  Cell   │◄──────────►│  Cell   │◄──────────►│  Cell   │            │
 │   │ Worker  │    P2P     │ Worker  │    P2P     │ Worker  │            │
-│   └─────────┘            └─────────┘            └─────────┘            │
+│   └─────────┘  Synapse   └─────────┘  Synapse   └─────────┘            │
 │                                                                         │
-│   CONTRIBUTE ───────► EARN rUv VOUCHERS ───────► ACCESS COMPUTE        │
+│   CONTRIBUTE ───────► EVOLVE ───────► SELF-SUSTAIN                     │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Overview
+
+edge-net is a browser-based simulation of artificial life principles applied to distributed computing:
+
+- **Cells** (nodes) contribute idle compute cycles
+- **Energy** (rUv - resource utility) flows through the network based on work performed
+- **Genesis cells** bootstrap the network, then retire as the organism matures
+- **Self-organization** emerges from local interactions
+- **Adaptive immunity** learns to recognize and defend against threats
+
+This is a **research simulation** - not a financial product or investment opportunity.
+
+## Research Goals
+
+1. **Emergence** - Can complex global behavior emerge from simple local rules?
+2. **Self-Sustainability** - Can a network become independent of its bootstrap nodes?
+3. **Adaptive Security** - Can Q-learning create effective distributed immune systems?
+4. **Economic Equilibrium** - What resource allocation patterns lead to stable ecosystems?
 
 ## Quick Start
 
@@ -31,272 +50,225 @@ Contribute browser compute, earn **rUv** (Resource Utility Vouchers), access sha
 <script type="module">
   import { EdgeNet } from '@ruvector/edge-net';
 
-  const node = await EdgeNet.init({
-    siteId: 'my-site',
+  const cell = await EdgeNet.init({
+    siteId: 'research-node',
     contribution: 0.3,  // 30% CPU when idle
   });
 
-  // Check earnings
-  console.log(`Balance: ${node.creditBalance()} rUv`);
+  // Monitor cell state
+  console.log(`Energy: ${cell.creditBalance()} units`);
+  console.log(`Fitness: ${cell.getNetworkFitness()}`);
 </script>
 ```
 
-## Features
+## Core Concepts
 
-| Feature | Description |
-|---------|-------------|
-| **rUv Currency** | Resource Utility Vouchers - quantum-resistant DAG credits |
-| **Contribution Curve** | Early adopters earn up to 10x multiplier |
-| **Web Workers** | Non-blocking compute in background threads |
-| **P2P Network** | Serverless task distribution via GUN.js |
-| **Stake & Earn** | Stake rUv to participate and earn rewards |
-| **Reputation System** | Quality-based ranking for task assignment |
-| **Genesis Sunset** | Genesis nodes retire when network is self-sustaining |
+### Energy System (rUv)
 
-## How It Works
-
-### 1. Contribute Compute
-
-When visitors browse your site, idle CPU cycles are used for distributed AI tasks:
+rUv (Resource Utility) represents energy flowing through the network:
+- Cells earn energy by performing computational work
+- Energy is spent to request work from other cells
+- The system maintains conservation principles
 
 ```javascript
-const node = await EdgeNet.init({
-  siteId: 'your-site',
-  contribution: {
-    cpuLimit: 0.3,          // Max 30% CPU
-    memoryLimit: 256_000_000, // 256MB
-    tasks: ['vectors', 'embeddings', 'encryption'],
-  },
-});
+// Check cell energy
+const energy = cell.ruvBalance();
+
+// Request distributed computation
+const result = await cell.submitTask('vectors', payload, { maxEnergy: 5 });
 ```
 
-### 2. Earn rUv (Resource Utility Vouchers)
+### Lifecycle Phases
 
-rUv are earned based on:
-- **Compute work completed** (1 rUv per task unit)
-- **Uptime bonus** (0.1 rUv per hour online)
-- **Early adopter multiplier** (up to 10x for first contributors)
+The network evolves through distinct phases, mimicking organism development:
+
+| Phase | Node Count | Characteristics |
+|-------|-----------|-----------------|
+| **Genesis** | 0 - 10K | Bootstrap period, high energy multipliers |
+| **Growth** | 10K - 50K | Rapid expansion, genesis nodes start retiring |
+| **Maturation** | 50K - 100K | Self-organization dominates |
+| **Independence** | 100K+ | Fully self-sustaining, genesis nodes retired |
+
+### Genesis Sunset
+
+Genesis nodes (bootstrap infrastructure) are designed to become obsolete:
+
+```
+Genesis Phase     Growth Phase      Maturation        Independence
+     │                 │                 │                 │
+     ▼                 ▼                 ▼                 ▼
+┌─────────┐      ┌─────────┐      ┌─────────┐      ┌─────────┐
+│ Genesis │      │ Genesis │      │ Genesis │      │         │
+│  ACTIVE │  ──► │ LIMITING│  ──► │READ-ONLY│  ──► │ RETIRED │
+│         │      │         │      │         │      │         │
+└─────────┘      └─────────┘      └─────────┘      └─────────┘
+  10K nodes        50K nodes       100K nodes       Network
+  threshold        threshold       threshold        self-runs
+```
+
+### Self-Learning Security
+
+The network implements adaptive immunity using Q-learning:
+
+- **Pattern Recognition** - Learns attack signatures from experience
+- **Threshold Adaptation** - Adjusts sensitivity based on threat levels
+- **Collective Memory** - Shares threat intelligence across cells
 
 ```javascript
-// Check current multiplier
-const multiplier = node.getMultiplier();
-console.log(`Current multiplier: ${multiplier}x`);
-
-// Check balance
-const balance = node.creditBalance();
-console.log(`rUv Balance: ${balance}`);
+// Check network health
+const fitness = cell.getNetworkFitness();
+const health = cell.getEconomicHealth();
+console.log(`Fitness: ${fitness}, Stability: ${JSON.parse(health).stability}`);
 ```
 
-### 3. Use rUv for AI Tasks
+### Network Topology
 
-Spend earned vouchers to access distributed AI compute:
+Cells self-organize into clusters based on capabilities:
 
 ```javascript
-// Submit a vector search task
-const result = await node.submitTask('vector_search', {
-  query: new Float32Array(128).fill(0.5),
-  k: 10,
-}, {
-  maxRuv: 5,
-});
+// Get optimal peers for routing
+const peers = cell.getOptimalPeers(5);
 
-console.log(result);
-// { results: [...], cost: 2, verified: true }
+// Record interaction quality
+cell.recordPeerInteraction(peerId, successRate);
 ```
 
-## rUv: Resource Utility Vouchers
+## Architecture
 
-rUv is a quantum-resistant DAG-based credit system designed for compute resource allocation:
+### Module Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          rUv DAG LEDGER                                 │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│    ┌───┐   ┌───┐   ┌───┐                                               │
-│    │TX1│──►│TX2│──►│TX4│                                               │
-│    └───┘   └───┘   └───┘                                               │
-│       ╲       ╲     ╱                                                   │
-│        ╲       ╲   ╱                                                    │
-│    ┌───┐ ╲   ┌───┐   ┌───┐                                             │
-│    │TX3│──►──│TX5│──►│TX6│◄── Latest transactions                      │
-│    └───┘     └───┘   └───┘                                             │
-│                                                                         │
-│    • No mining (instant finality)                                      │
-│    • Zero transaction fees                                              │
-│    • Quantum-resistant signatures (ML-DSA)                              │
-│    • Proof-of-work spam prevention                                      │
-│    • Genesis nodes sunset when network matures                          │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+| Module | Purpose |
+|--------|---------|
+| `identity` | Cell identification and authentication |
+| `credits` | Energy accounting and flow |
+| `tasks` | Work distribution and execution |
+| `security` | Adaptive threat detection |
+| `evolution` | Self-organization and optimization |
+| `events` | Lifecycle events and milestones |
+| `adversarial` | Threat simulation for testing |
 
-### Contribution Curve
+### Evolution Engine
 
-Early adopters receive bonus multipliers that decay as the network grows:
-
-| Network Stage | Multiplier | Genesis Status |
-|---------------|------------|----------------|
-| Genesis | 10.0x | Genesis nodes required |
-| 100K CPU-hours | 9.1x | Genesis nodes required |
-| 1M CPU-hours | 4.0x | Genesis nodes optional |
-| 10M+ CPU-hours | 1.0x | Network self-sustaining |
-
-```
-multiplier = 1 + 9 × e^(-network_compute / 1,000,000)
-```
-
-### Genesis Node Sunset
-
-Genesis nodes bootstrap the network but are designed to become unnecessary:
-
-| Threshold | Action |
-|-----------|--------|
-| 10K+ active nodes | Genesis nodes stop accepting new connections |
-| 50K+ active nodes | Genesis nodes enter read-only mode |
-| 100K+ active nodes | Genesis nodes can be safely retired |
-| Self-sustaining | Pure P2P network - no central infrastructure |
-
-### Staking
-
-Stake rUv to participate in consensus and earn passive rewards:
+Tracks cell fitness and guides network evolution:
 
 ```javascript
-// Stake 1000 rUv
-await node.stake(1000);
+// Check if this cell should replicate
+if (cell.shouldReplicate()) {
+  const config = cell.getRecommendedConfig();
+  // High-performing cells can spawn similar nodes
+}
 
-// Check staked amount
-const staked = node.stakedAmount();
-
-// Unstake (after lock period)
-await node.unstake(500);
+// Record performance for evolution
+cell.recordPerformance(successRate, throughput);
 ```
 
-## Security
+### Economic Sustainability
 
-| Layer | Protection |
-|-------|------------|
-| Identity | Ed25519 signatures |
-| Encryption | AES-256-GCM for task payloads |
-| Consensus | QDAG with cumulative weight |
-| Anti-Sybil | Stake + fingerprinting + rate limits |
-| Verification | Redundant execution + spot-checks |
-
-See [SECURITY.md](./SECURITY.md) for full security analysis.
-
-## API Reference
-
-### EdgeNetNode
+The network tracks sustainability metrics:
 
 ```javascript
-const node = await EdgeNet.init(config);
+// Check if network is self-sustaining
+const sustainable = cell.isSelfSustaining(activeNodes, dailyTasks);
 
-// Identity
-node.nodeId()           // Unique node identifier
-node.creditBalance()    // Current rUv balance
-node.getMultiplier()    // Current reward multiplier
-node.getStats()         // { ruv, tasks, uptime, reputation }
-
-// Contribution
-node.start()            // Start contributing
-node.pause()            // Pause contribution
-node.resume()           // Resume contribution
-node.disconnect()       // Leave network
-
-// Tasks
-await node.submitTask(type, payload, options)
-await node.processNextTask()  // For workers
-
-// Staking
-await node.stake(amount)
-await node.unstake(amount)
-node.stakedAmount()
-```
-
-### Configuration
-
-```javascript
-EdgeNet.init({
-  // Identity
-  siteId: 'my-site',
-
-  // Contribution
-  contribution: {
-    cpuLimit: 0.3,              // 0.0 - 1.0
-    memoryLimit: 256_000_000,   // bytes
-    bandwidthLimit: 1_000_000,  // bytes/sec
-    tasks: ['vectors', 'embeddings', 'encryption'],
-  },
-
-  // Idle detection
-  idle: {
-    minIdleTime: 5000,          // ms before contributing
-    respectBattery: true,       // reduce on battery
-  },
-
-  // Network
-  relays: [
-    'https://gun-manhattan.herokuapp.com/gun',
-  ],
-
-  // Callbacks
-  onCredit: (earned, total) => {},
-  onTask: (task) => {},
-  onError: (error) => {},
-});
+// Get economic health
+const health = JSON.parse(cell.getEconomicHealth());
+// { velocity, utilization, growth, stability }
 ```
 
 ## Task Types
 
-| Type | Description | Cost |
-|------|-------------|------|
-| `vector_search` | k-NN search in HNSW index | 1 rUv / 1K vectors |
-| `vector_insert` | Add vectors to index | 0.5 rUv / 100 vectors |
-| `embedding` | Generate text embeddings | 5 rUv / 100 texts |
-| `semantic_match` | Task-to-agent routing | 1 rUv / 10 queries |
-| `encryption` | AES encrypt/decrypt | 0.1 rUv / MB |
-| `compression` | Adaptive quantization | 0.2 rUv / MB |
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `vector_search` | k-NN similarity search | Semantic lookup |
+| `vector_insert` | Add to distributed index | Knowledge storage |
+| `embedding` | Generate representations | Text understanding |
+| `semantic_match` | Intent classification | Task routing |
+| `encryption` | Secure data handling | Privacy |
+| `compression` | Data optimization | Efficiency |
 
-## Performance
+## Simulation Features
 
-| Metric | Target |
-|--------|--------|
-| WASM load time | < 100ms |
-| Memory usage (idle) | < 50MB |
-| CPU usage (active) | Configurable 10-50% |
-| Task latency | < 100ms |
-| Credit sync | < 1s |
+### Adversarial Testing
 
-## Integration with RuVector
+Built-in attack simulation for security research:
 
-edge-net integrates with the RuVector ecosystem:
+```javascript
+// Run security audit
+const report = cell.runSecurityAudit();
 
-- **ruvector-dag**: DAG-based task scheduling and critical path analysis
-- **ruvector-graph**: Distributed graph database for knowledge storage
-- **@ruvector/edge**: WASM modules for crypto, vectors, neural networks
-- **QUDAG**: Quantum-resistant consensus from ruvector-dag
+// Simulates: DDoS, Sybil, Byzantine, Eclipse, Replay attacks
+// Returns: security score, grade, vulnerabilities
+```
+
+### Lifecycle Events
+
+The network celebrates milestones (Easter eggs for researchers):
+
+```javascript
+// Check for active events
+const events = cell.checkEvents();
+
+// Get themed network status
+const status = cell.getThemedStatus(nodeCount);
+```
+
+### Metrics and Monitoring
+
+```javascript
+// Node statistics
+const stats = cell.getStats();
+// { ruv_earned, ruv_spent, tasks_completed, reputation, uptime }
+
+// Optimization stats
+const optStats = cell.getOptimizationStats();
+
+// Protocol fund (for sustainability tracking)
+const treasury = cell.getTreasury();
+```
 
 ## Development
 
 ```bash
-# Build WASM
+# Build WASM module
 cd examples/edge-net
 wasm-pack build --target web --out-dir pkg
 
 # Run tests
-wasm-pack test --headless --chrome
+cargo test
 
-# Bundle for CDN
-cd pkg && npx esbuild edge-net.js --bundle --minify --outfile=edge-net.min.js
+# Build for production
+wasm-pack build --target web --release
 ```
+
+## Research Applications
+
+- **Distributed Systems** - Study P2P network dynamics
+- **Artificial Life** - Observe emergent organization
+- **Game Theory** - Analyze cooperation strategies
+- **Security** - Test adaptive defense mechanisms
+- **Economics** - Model resource allocation
+
+## Disclaimer
+
+This is a **research simulation** for studying distributed systems and artificial life principles. It is:
+- NOT a cryptocurrency or financial instrument
+- NOT an investment opportunity
+- NOT a money-making scheme
+
+The "energy" (rUv) in this system is a **simulation metric** for measuring resource contribution and consumption within the research network.
+
+## Related Work
+
+- [RuVector](https://github.com/ruvnet/ruvector) - Vector database ecosystem
+- [Artificial Life Research](https://alife.org/) - Academic community
+- [P2P Systems](https://en.wikipedia.org/wiki/Peer-to-peer) - Distributed computing
 
 ## License
 
-MIT License
+MIT License - For research and educational purposes.
 
 ## Links
 
 - [Design Document](./DESIGN.md)
 - [Security Analysis](./SECURITY.md)
 - [RuVector GitHub](https://github.com/ruvnet/ruvector)
-- [npm Package](https://www.npmjs.com/package/@ruvector/edge-net)
