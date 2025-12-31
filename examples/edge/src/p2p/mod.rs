@@ -10,6 +10,8 @@
 //! - Relay health monitoring
 //! - Task execution envelope with resource budgets
 //! - WASM compatible
+//! - Quantization (4-32x compression)
+//! - Hyperdimensional Computing for pattern matching
 
 mod identity;
 mod crypto;
@@ -17,10 +19,27 @@ mod relay;
 mod artifact;
 mod envelope;
 mod swarm;
+mod advanced;
 
-pub use identity::{IdentityManager, KeyPair};
+pub use identity::{IdentityManager, KeyPair, RegisteredMember};
 pub use crypto::{CryptoV2, EncryptedPayload};
 pub use relay::RelayManager;
 pub use artifact::ArtifactStore;
 pub use envelope::{SignedEnvelope, TaskEnvelope, TaskReceipt, ArtifactPointer};
 pub use swarm::{P2PSwarmV2, SwarmStatus};
+pub use advanced::{
+    // Quantization
+    ScalarQuantized, BinaryQuantized, CompressedData,
+    // Hyperdimensional Computing
+    Hypervector, HdcMemory, HDC_DIMENSION,
+    // Adaptive compression
+    AdaptiveCompressor, NetworkCondition,
+    // Pattern routing
+    PatternRouter,
+    // HNSW vector index
+    HnswIndex,
+    // Post-quantum crypto
+    HybridKeyPair, HybridPublicKey, HybridSignature,
+    // Spiking neural networks
+    LIFNeuron, SpikingNetwork,
+};
