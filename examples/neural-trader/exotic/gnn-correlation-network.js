@@ -68,6 +68,41 @@ class GraphNode {
   }
 }
 
+// Rolling Statistics for O(1) incremental updates
+class RollingStats {
+  constructor(windowSize) {
+    this.windowSize = windowSize;
+    this.values = [];
+    this.sum = 0;
+    this.sumSq = 0;
+  }
+
+  add(value) {
+    if (this.values.length >= this.windowSize) {
+      const removed = this.values.shift();
+      this.sum -= removed;
+      this.sumSq -= removed * removed;
+    }
+    this.values.push(value);
+    this.sum += value;
+    this.sumSq += value * value;
+  }
+
+  get mean() {
+    return this.values.length > 0 ? this.sum / this.values.length : 0;
+  }
+
+  get variance() {
+    if (this.values.length < 2) return 0;
+    const n = this.values.length;
+    return (this.sumSq - (this.sum * this.sum) / n) / (n - 1);
+  }
+
+  get std() {
+    return Math.sqrt(Math.max(0, this.variance));
+  }
+}
+
 // Correlation Network
 class CorrelationNetwork {
   constructor(config) {
@@ -75,6 +110,8 @@ class CorrelationNetwork {
     this.nodes = new Map();
     this.adjacencyMatrix = [];
     this.history = [];
+    this.correlationCache = new Map();  // Cache for correlation pairs
+    this.statsCache = new Map();        // Cache for per-asset statistics
   }
 
   // Add asset to network
@@ -131,6 +168,37 @@ class CorrelationNetwork {
     }
 
     return 0;
+  }
+
+  // Optimized correlation with caching (O(n) instead of O(n²) for repeated calls)
+  calculateCorrelationCached(symbol1, symbol2) {
+    const cacheKey = symbol1 < symbol2 ? `${symbol1}:${symbol2}` : `${symbol2}:${symbol1}`;
+
+    // Check cache validity
+    const cached = this.correlationCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 1000) {
+      return cached.value;
+    }
+
+    const node1 = this.nodes.get(symbol1);
+    const node2 = this.nodes.get(symbol2);
+
+    if (!node1 || !node2) return 0;
+
+    const correlation = this.calculateCorrelation(
+      node1.returns,
+      node2.returns,
+      this.config.construction.method
+    );
+
+    this.correlationCache.set(cacheKey, { value: correlation, timestamp: Date.now() });
+    return correlation;
+  }
+
+  // Clear correlation cache (call when data updates)
+  invalidateCache() {
+    this.correlationCache.clear();
+    this.statsCache.clear();
   }
 
   // Build correlation network

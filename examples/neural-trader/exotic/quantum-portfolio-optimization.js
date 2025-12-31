@@ -48,6 +48,38 @@ const quantumConfig = {
   }
 };
 
+// Object pool for Complex numbers (reduces GC pressure)
+class ComplexPool {
+  constructor(initialSize = 1024) {
+    this.pool = [];
+    this.index = 0;
+    for (let i = 0; i < initialSize; i++) {
+      this.pool.push(new Complex(0, 0));
+    }
+  }
+
+  acquire(real = 0, imag = 0) {
+    if (this.index < this.pool.length) {
+      const c = this.pool[this.index++];
+      c.real = real;
+      c.imag = imag;
+      return c;
+    }
+    // Expand pool if needed
+    const c = new Complex(real, imag);
+    this.pool.push(c);
+    this.index++;
+    return c;
+  }
+
+  reset() {
+    this.index = 0;
+  }
+}
+
+// Global pool instance for reuse
+const complexPool = new ComplexPool(4096);
+
 // Complex number class for quantum states
 class Complex {
   constructor(real, imag = 0) {
@@ -59,6 +91,13 @@ class Complex {
     return new Complex(this.real + other.real, this.imag + other.imag);
   }
 
+  // In-place add (avoids allocation)
+  addInPlace(other) {
+    this.real += other.real;
+    this.imag += other.imag;
+    return this;
+  }
+
   multiply(other) {
     return new Complex(
       this.real * other.real - this.imag * other.imag,
@@ -66,12 +105,32 @@ class Complex {
     );
   }
 
+  // In-place multiply (avoids allocation)
+  multiplyInPlace(other) {
+    const newReal = this.real * other.real - this.imag * other.imag;
+    const newImag = this.real * other.imag + this.imag * other.real;
+    this.real = newReal;
+    this.imag = newImag;
+    return this;
+  }
+
   scale(s) {
     return new Complex(this.real * s, this.imag * s);
   }
 
+  // In-place scale (avoids allocation)
+  scaleInPlace(s) {
+    this.real *= s;
+    this.imag *= s;
+    return this;
+  }
+
   magnitude() {
     return Math.sqrt(this.real * this.real + this.imag * this.imag);
+  }
+
+  magnitudeSq() {
+    return this.real * this.real + this.imag * this.imag;
   }
 
   static exp(theta) {

@@ -13,6 +13,68 @@
  * with cross-agent communication via shared memory space.
  */
 
+// Ring buffer for efficient bounded memory
+class RingBuffer {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.buffer = new Array(capacity);
+    this.head = 0;
+    this.size = 0;
+  }
+
+  push(item) {
+    this.buffer[this.head] = item;
+    this.head = (this.head + 1) % this.capacity;
+    if (this.size < this.capacity) this.size++;
+  }
+
+  getAll() {
+    if (this.size < this.capacity) {
+      return this.buffer.slice(0, this.size);
+    }
+    return [...this.buffer.slice(this.head), ...this.buffer.slice(0, this.head)];
+  }
+
+  getLast(n) {
+    const all = this.getAll();
+    return all.slice(-Math.min(n, all.length));
+  }
+
+  get length() {
+    return this.size;
+  }
+}
+
+// Signal pool for object reuse
+class SignalPool {
+  constructor(initialSize = 100) {
+    this.pool = [];
+    for (let i = 0; i < initialSize; i++) {
+      this.pool.push({ direction: 0, confidence: 0, timestamp: 0, reason: '' });
+    }
+  }
+
+  acquire(direction, confidence, reason) {
+    let signal = this.pool.pop();
+    if (!signal) {
+      signal = { direction: 0, confidence: 0, timestamp: 0, reason: '' };
+    }
+    signal.direction = direction;
+    signal.confidence = confidence;
+    signal.timestamp = Date.now();
+    signal.reason = reason;
+    return signal;
+  }
+
+  release(signal) {
+    if (this.pool.length < 500) {
+      this.pool.push(signal);
+    }
+  }
+}
+
+const signalPool = new SignalPool(200);
+
 // Swarm configuration
 const swarmConfig = {
   // Agent types with specializations

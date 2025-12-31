@@ -60,18 +60,26 @@ function softmax(arr) {
   return exp.map(x => x / sum);
 }
 
-// Matrix multiplication
+// Matrix multiplication (cache-friendly loop order)
 function matmul(a, b) {
+  if (!a || !b || a.length === 0 || b.length === 0) return [];
+
   const rowsA = a.length;
   const colsA = a[0].length;
   const colsB = b[0].length;
 
-  const result = Array(rowsA).fill(null).map(() => Array(colsB).fill(0));
+  // Pre-allocate result with Float64Array for better performance
+  const result = Array(rowsA).fill(null).map(() => new Array(colsB).fill(0));
 
+  // Cache-friendly loop order: i-k-j (row-major access pattern)
   for (let i = 0; i < rowsA; i++) {
-    for (let j = 0; j < colsB; j++) {
-      for (let k = 0; k < colsA; k++) {
-        result[i][j] += a[i][k] * b[k][j];
+    const rowA = a[i];
+    const rowR = result[i];
+    for (let k = 0; k < colsA; k++) {
+      const aik = rowA[k];
+      const rowB = b[k];
+      for (let j = 0; j < colsB; j++) {
+        rowR[j] += aik * rowB[j];
       }
     }
   }
