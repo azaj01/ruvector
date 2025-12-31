@@ -1,176 +1,238 @@
-
 #!/bin/bash
 
-# Read JSON input from stdin
+# RuVector Intelligence Statusline
+# Multi-line display showcasing self-learning capabilities
+
 INPUT=$(cat)
 MODEL=$(echo "$INPUT" | jq -r '.model.display_name // "Claude"')
 CWD=$(echo "$INPUT" | jq -r '.workspace.current_dir // .cwd')
 DIR=$(basename "$CWD")
 
-# Replace claude-code-flow with branded name
-if [ "$DIR" = "claude-code-flow" ]; then
-  DIR="🌊 Claude Flow"
-fi
-
 # Get git branch
 BRANCH=$(cd "$CWD" 2>/dev/null && git branch --show-current 2>/dev/null)
 
-# Start building statusline
-printf "\033[1m$MODEL\033[0m in \033[36m$DIR\033[0m"
-[ -n "$BRANCH" ] && printf " on \033[33m⎇ $BRANCH\033[0m"
+# Colors
+RESET="\033[0m"
+BOLD="\033[1m"
+CYAN="\033[36m"
+YELLOW="\033[33m"
+GREEN="\033[32m"
+MAGENTA="\033[35m"
+BLUE="\033[34m"
+RED="\033[31m"
+DIM="\033[2m"
 
-# Claude-Flow integration
+# ═══════════════════════════════════════════════════════════════════════════════
+# LINE 1: Model, Directory, Git
+# ═══════════════════════════════════════════════════════════════════════════════
+printf "${BOLD}${MODEL}${RESET} in ${CYAN}${DIR}${RESET}"
+[ -n "$BRANCH" ] && printf " on ${YELLOW}⎇ ${BRANCH}${RESET}"
+echo
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LINE 2: RuVector Intelligence Stats
+# ═══════════════════════════════════════════════════════════════════════════════
+# Check multiple locations for intelligence file
+INTEL_FILE=""
+for INTEL_PATH in "$CWD/.ruvector/intelligence.json" \
+                  "$CWD/npm/packages/ruvector/.ruvector/intelligence.json" \
+                  "$HOME/.ruvector/intelligence.json"; do
+  if [ -f "$INTEL_PATH" ]; then
+    INTEL_FILE="$INTEL_PATH"
+    break
+  fi
+done
+
+if [ -n "$INTEL_FILE" ]; then
+  # Extract learning metrics
+  INTEL=$(cat "$INTEL_FILE" 2>/dev/null)
+
+  # Detect schema version (v2 has .learning.qTables, v1 has .patterns)
+  HAS_LEARNING=$(echo "$INTEL" | jq -r 'has("learning")' 2>/dev/null)
+
+  if [ "$HAS_LEARNING" = "true" ]; then
+    # v2 Schema: Multi-algorithm learning engine
+    PATTERN_COUNT=$(echo "$INTEL" | jq -r '[.learning.qTables // {} | to_entries[].value | to_entries | length] | add // 0' 2>/dev/null)
+    ACTIVE_ALGOS=$(echo "$INTEL" | jq -r '[.learning.stats // {} | to_entries[] | select(.value.updates > 0)] | length' 2>/dev/null)
+    TOTAL_ALGOS=$(echo "$INTEL" | jq -r '[.learning.stats // {} | keys] | length' 2>/dev/null)
+    BEST_ALGO=$(echo "$INTEL" | jq -r '
+      .learning.stats // {} | to_entries
+      | map(select(.value.updates > 0))
+      | sort_by(-.value.convergenceScore)
+      | .[0].key // "none"
+    ' 2>/dev/null)
+    BEST_SCORE=$(echo "$INTEL" | jq -r ".learning.stats.\"$BEST_ALGO\".convergenceScore // 0" 2>/dev/null | awk '{printf "%.0f", $1 * 100}')
+    TOTAL_UPDATES=$(echo "$INTEL" | jq -r '[.learning.stats // {} | to_entries[].value.updates] | add // 0' 2>/dev/null)
+    MEMORY_COUNT=$(echo "$INTEL" | jq -r '.memory.entries | length // 0' 2>/dev/null)
+    TRAJ_COUNT=$(echo "$INTEL" | jq -r '.learning.trajectories | length // 0' 2>/dev/null)
+    ROUTING_ALGO=$(echo "$INTEL" | jq -r '.learning.configs."agent-routing".algorithm // "double-q"' 2>/dev/null)
+    LEARNING_RATE=$(echo "$INTEL" | jq -r '.learning.configs."agent-routing".learningRate // 0.1' 2>/dev/null)
+    EPSILON=$(echo "$INTEL" | jq -r '.learning.configs."agent-routing".epsilon // 0.1' 2>/dev/null)
+    TOP_AGENTS=$(echo "$INTEL" | jq -r '
+      .learning.qTables // {} | to_entries |
+      map(.value | to_entries | sort_by(-.value) | .[0] | select(.value > 0)) |
+      map(.key) | unique | .[0:3] | join(", ")
+    ' 2>/dev/null)
+    SCHEMA="v2"
+  else
+    # v1 Schema: Simple patterns/memories
+    PATTERN_COUNT=$(echo "$INTEL" | jq -r '.patterns | length // 0' 2>/dev/null)
+    MEMORY_COUNT=$(echo "$INTEL" | jq -r '.memories | length // 0' 2>/dev/null)
+    ACTIVE_ALGOS=0
+    TOTAL_ALGOS=0
+    BEST_ALGO="none"
+    BEST_SCORE=0
+    TOTAL_UPDATES=0
+    TRAJ_COUNT=0
+    ROUTING_ALGO="q-learning"
+    LEARNING_RATE="0.1"
+    EPSILON="0.1"
+    TOP_AGENTS=""
+    SCHEMA="v1"
+  fi
+
+  # Build Line 2
+  printf "${MAGENTA}🧠 RuVector${RESET}"
+
+  # Patterns learned
+  if [ "$PATTERN_COUNT" != "null" ] && [ "$PATTERN_COUNT" -gt 0 ]; then
+    printf " ${GREEN}◆${RESET} ${PATTERN_COUNT} patterns"
+  else
+    printf " ${DIM}◇ learning${RESET}"
+  fi
+
+  # Active algorithms
+  if [ "$ACTIVE_ALGOS" != "null" ] && [ "$ACTIVE_ALGOS" -gt 0 ]; then
+    printf " ${CYAN}⚙${RESET} ${ACTIVE_ALGOS}/${TOTAL_ALGOS} algos"
+  fi
+
+  # Best algorithm with convergence
+  if [ "$BEST_ALGO" != "none" ] && [ "$BEST_ALGO" != "null" ]; then
+    # Shorten algorithm name
+    case "$BEST_ALGO" in
+      "double-q") SHORT_ALGO="DQ" ;;
+      "q-learning") SHORT_ALGO="QL" ;;
+      "actor-critic") SHORT_ALGO="AC" ;;
+      "decision-transformer") SHORT_ALGO="DT" ;;
+      "monte-carlo") SHORT_ALGO="MC" ;;
+      "td-lambda") SHORT_ALGO="TD" ;;
+      *) SHORT_ALGO="${BEST_ALGO:0:3}" ;;
+    esac
+
+    # Color based on convergence
+    if [ "$BEST_SCORE" -ge 80 ]; then
+      SCORE_COLOR="$GREEN"
+    elif [ "$BEST_SCORE" -ge 50 ]; then
+      SCORE_COLOR="$YELLOW"
+    else
+      SCORE_COLOR="$RED"
+    fi
+    printf " ${SCORE_COLOR}★${SHORT_ALGO}:${BEST_SCORE}%%${RESET}"
+  fi
+
+  # Memory entries
+  if [ "$MEMORY_COUNT" != "null" ] && [ "$MEMORY_COUNT" -gt 0 ]; then
+    printf " ${BLUE}⬡${RESET} ${MEMORY_COUNT} mem"
+  fi
+
+  # Trajectories
+  if [ "$TRAJ_COUNT" != "null" ] && [ "$TRAJ_COUNT" -gt 0 ]; then
+    printf " ${YELLOW}↝${RESET} ${TRAJ_COUNT} traj"
+  fi
+
+  echo
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # LINE 3: Agent Routing & Session Performance
+  # ═══════════════════════════════════════════════════════════════════════════════
+
+  # Compression stats (v2 only)
+  COMPRESSION=$(echo "$INTEL" | jq -r '.tensorCompress.compressionRatio // 0' 2>/dev/null | awk '{printf "%.0f", $1 * 100}')
+
+  printf "${BLUE}🎯 Routing${RESET}"
+
+  # Show routing algorithm
+  case "$ROUTING_ALGO" in
+    "double-q") ALGO_ICON="⚡DQ" ;;
+    "sarsa") ALGO_ICON="🔄SA" ;;
+    "actor-critic") ALGO_ICON="🎭AC" ;;
+    *) ALGO_ICON="$ROUTING_ALGO" ;;
+  esac
+  printf " ${CYAN}${ALGO_ICON}${RESET}"
+
+  # Learning rate
+  LR_PCT=$(echo "$LEARNING_RATE" | awk '{printf "%.0f", $1 * 100}')
+  printf " lr:${LR_PCT}%%"
+
+  # Exploration rate
+  EPS_PCT=$(echo "$EPSILON" | awk '{printf "%.0f", $1 * 100}')
+  printf " ε:${EPS_PCT}%%"
+
+  # Top learned agents
+  if [ -n "$TOP_AGENTS" ] && [ "$TOP_AGENTS" != "null" ] && [ "$TOP_AGENTS" != "" ]; then
+    printf " ${GREEN}→${RESET} ${TOP_AGENTS}"
+  fi
+
+  # Session info
+  if [ "$TOTAL_UPDATES" != "null" ] && [ "$TOTAL_UPDATES" -gt 0 ]; then
+    printf " ${DIM}│${RESET} ${YELLOW}↻${RESET}${TOTAL_UPDATES}"
+  fi
+
+  # Compression ratio
+  if [ "$COMPRESSION" != "null" ] && [ "$COMPRESSION" -gt 0 ]; then
+    printf " ${MAGENTA}◊${RESET}${COMPRESSION}%% comp"
+  fi
+
+  echo
+
+else
+  # No intelligence file - show initialization hint
+  printf "${DIM}🧠 RuVector: run 'npx ruvector hooks session-start' to initialize${RESET}\n"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LINE 4: Claude Flow Integration (if available)
+# ═══════════════════════════════════════════════════════════════════════════════
 FLOW_DIR="$CWD/.claude-flow"
 
 if [ -d "$FLOW_DIR" ]; then
-  printf " │"
+  printf "${DIM}⚡ Flow:${RESET}"
 
-  # 1. Swarm Configuration & Topology
+  # Swarm config
   if [ -f "$FLOW_DIR/swarm-config.json" ]; then
     STRATEGY=$(jq -r '.defaultStrategy // empty' "$FLOW_DIR/swarm-config.json" 2>/dev/null)
+    AGENT_COUNT=$(jq -r '.agentProfiles | length' "$FLOW_DIR/swarm-config.json" 2>/dev/null)
+
     if [ -n "$STRATEGY" ]; then
-      # Map strategy to topology icon
       case "$STRATEGY" in
-        "balanced") TOPO_ICON="⚡mesh" ;;
-        "conservative") TOPO_ICON="⚡hier" ;;
-        "aggressive") TOPO_ICON="⚡ring" ;;
-        *) TOPO_ICON="⚡$STRATEGY" ;;
+        "balanced") TOPO="mesh" ;;
+        "conservative") TOPO="hier" ;;
+        "aggressive") TOPO="ring" ;;
+        *) TOPO="$STRATEGY" ;;
       esac
-      printf " \033[35m$TOPO_ICON\033[0m"
+      printf " ${MAGENTA}${TOPO}${RESET}"
+    fi
 
-      # Count agent profiles as "configured agents"
-      AGENT_COUNT=$(jq -r '.agentProfiles | length' "$FLOW_DIR/swarm-config.json" 2>/dev/null)
-      if [ -n "$AGENT_COUNT" ] && [ "$AGENT_COUNT" != "null" ] && [ "$AGENT_COUNT" -gt 0 ]; then
-        printf "  \033[35m🤖 $AGENT_COUNT\033[0m"
-      fi
+    if [ -n "$AGENT_COUNT" ] && [ "$AGENT_COUNT" != "null" ] && [ "$AGENT_COUNT" -gt 0 ]; then
+      printf " ${CYAN}🤖${AGENT_COUNT}${RESET}"
     fi
   fi
 
-  # 2. Real-time System Metrics
-  if [ -f "$FLOW_DIR/metrics/system-metrics.json" ]; then
-    # Get latest metrics (last entry in array)
-    LATEST=$(jq -r '.[-1]' "$FLOW_DIR/metrics/system-metrics.json" 2>/dev/null)
-
-    if [ -n "$LATEST" ] && [ "$LATEST" != "null" ]; then
-      # Memory usage
-      MEM_PERCENT=$(echo "$LATEST" | jq -r '.memoryUsagePercent // 0' | awk '{printf "%.0f", $1}')
-      if [ -n "$MEM_PERCENT" ] && [ "$MEM_PERCENT" != "null" ]; then
-        # Color-coded memory (green <60%, yellow 60-80%, red >80%)
-        if [ "$MEM_PERCENT" -lt 60 ]; then
-          MEM_COLOR="\033[32m"  # Green
-        elif [ "$MEM_PERCENT" -lt 80 ]; then
-          MEM_COLOR="\033[33m"  # Yellow
-        else
-          MEM_COLOR="\033[31m"  # Red
-        fi
-        printf "  ${MEM_COLOR}💾 ${MEM_PERCENT}%\033[0m"
-      fi
-
-      # CPU load
-      CPU_LOAD=$(echo "$LATEST" | jq -r '.cpuLoad // 0' | awk '{printf "%.0f", $1 * 100}')
-      if [ -n "$CPU_LOAD" ] && [ "$CPU_LOAD" != "null" ]; then
-        # Color-coded CPU (green <50%, yellow 50-75%, red >75%)
-        if [ "$CPU_LOAD" -lt 50 ]; then
-          CPU_COLOR="\033[32m"  # Green
-        elif [ "$CPU_LOAD" -lt 75 ]; then
-          CPU_COLOR="\033[33m"  # Yellow
-        else
-          CPU_COLOR="\033[31m"  # Red
-        fi
-        printf "  ${CPU_COLOR}⚙ ${CPU_LOAD}%\033[0m"
-      fi
-    fi
-  fi
-
-  # 3. Session State
-  if [ -f "$FLOW_DIR/session-state.json" ]; then
-    SESSION_ID=$(jq -r '.sessionId // empty' "$FLOW_DIR/session-state.json" 2>/dev/null)
-    ACTIVE=$(jq -r '.active // false' "$FLOW_DIR/session-state.json" 2>/dev/null)
-
-    if [ "$ACTIVE" = "true" ] && [ -n "$SESSION_ID" ]; then
-      # Show abbreviated session ID
-      SHORT_ID=$(echo "$SESSION_ID" | cut -d'-' -f1)
-      printf "  \033[34m🔄 $SHORT_ID\033[0m"
-    fi
-  fi
-
-  # 4. Performance Metrics from task-metrics.json
-  if [ -f "$FLOW_DIR/metrics/task-metrics.json" ]; then
-    # Parse task metrics for success rate, avg time, and streak
-    METRICS=$(jq -r '
-      # Calculate metrics
-      (map(select(.success == true)) | length) as $successful |
-      (length) as $total |
-      (if $total > 0 then ($successful / $total * 100) else 0 end) as $success_rate |
-      (map(.duration // 0) | add / length) as $avg_duration |
-      # Calculate streak (consecutive successes from end)
-      (reverse |
-        reduce .[] as $task (0;
-          if $task.success == true then . + 1 else 0 end
-        )
-      ) as $streak |
-      {
-        success_rate: $success_rate,
-        avg_duration: $avg_duration,
-        streak: $streak,
-        total: $total
-      } | @json
-    ' "$FLOW_DIR/metrics/task-metrics.json" 2>/dev/null)
-
-    if [ -n "$METRICS" ] && [ "$METRICS" != "null" ]; then
-      # Success Rate
-      SUCCESS_RATE=$(echo "$METRICS" | jq -r '.success_rate // 0' | awk '{printf "%.0f", $1}')
-      TOTAL_TASKS=$(echo "$METRICS" | jq -r '.total // 0')
-
-      if [ -n "$SUCCESS_RATE" ] && [ "$TOTAL_TASKS" -gt 0 ]; then
-        # Color-code: Green (>80%), Yellow (60-80%), Red (<60%)
-        if [ "$SUCCESS_RATE" -gt 80 ]; then
-          SUCCESS_COLOR="\033[32m"  # Green
-        elif [ "$SUCCESS_RATE" -ge 60 ]; then
-          SUCCESS_COLOR="\033[33m"  # Yellow
-        else
-          SUCCESS_COLOR="\033[31m"  # Red
-        fi
-        printf "  ${SUCCESS_COLOR}🎯 ${SUCCESS_RATE}%\033[0m"
-      fi
-
-      # Average Time
-      AVG_TIME=$(echo "$METRICS" | jq -r '.avg_duration // 0')
-      if [ -n "$AVG_TIME" ] && [ "$TOTAL_TASKS" -gt 0 ]; then
-        # Format smartly: seconds, minutes, or hours
-        if [ $(echo "$AVG_TIME < 60" | bc -l 2>/dev/null || echo 0) -eq 1 ]; then
-          TIME_STR=$(echo "$AVG_TIME" | awk '{printf "%.1fs", $1}')
-        elif [ $(echo "$AVG_TIME < 3600" | bc -l 2>/dev/null || echo 0) -eq 1 ]; then
-          TIME_STR=$(echo "$AVG_TIME" | awk '{printf "%.1fm", $1/60}')
-        else
-          TIME_STR=$(echo "$AVG_TIME" | awk '{printf "%.1fh", $1/3600}')
-        fi
-        printf "  \033[36m⏱️  $TIME_STR\033[0m"
-      fi
-
-      # Streak (only show if > 0)
-      STREAK=$(echo "$METRICS" | jq -r '.streak // 0')
-      if [ -n "$STREAK" ] && [ "$STREAK" -gt 0 ]; then
-        printf "  \033[91m🔥 $STREAK\033[0m"
-      fi
-    fi
-  fi
-
-  # 5. Active Tasks (check for task files)
+  # Active tasks
   if [ -d "$FLOW_DIR/tasks" ]; then
     TASK_COUNT=$(find "$FLOW_DIR/tasks" -name "*.json" -type f 2>/dev/null | wc -l)
     if [ "$TASK_COUNT" -gt 0 ]; then
-      printf "  \033[36m📋 $TASK_COUNT\033[0m"
+      printf " ${YELLOW}📋${TASK_COUNT}${RESET}"
     fi
   fi
 
-  # 6. Check for hooks activity
-  if [ -f "$FLOW_DIR/hooks-state.json" ]; then
-    HOOKS_ACTIVE=$(jq -r '.enabled // false' "$FLOW_DIR/hooks-state.json" 2>/dev/null)
-    if [ "$HOOKS_ACTIVE" = "true" ]; then
-      printf " \033[35m🔗\033[0m"
+  # Session state
+  if [ -f "$FLOW_DIR/session-state.json" ]; then
+    ACTIVE=$(jq -r '.active // false' "$FLOW_DIR/session-state.json" 2>/dev/null)
+    if [ "$ACTIVE" = "true" ]; then
+      printf " ${GREEN}●${RESET}"
     fi
   fi
+
+  echo
 fi
-
-echo

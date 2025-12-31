@@ -2233,12 +2233,7 @@ class Intelligence {
   }
 
   load() {
-    try {
-      if (fs.existsSync(this.intelPath)) {
-        return JSON.parse(fs.readFileSync(this.intelPath, 'utf-8'));
-      }
-    } catch {}
-    return {
+    const defaults = {
       patterns: {},
       memories: [],
       trajectories: [],
@@ -2248,6 +2243,25 @@ class Intelligence {
       edges: [],
       stats: { total_patterns: 0, total_memories: 0, total_trajectories: 0, total_errors: 0, session_count: 0, last_session: 0 }
     };
+    try {
+      if (fs.existsSync(this.intelPath)) {
+        const data = JSON.parse(fs.readFileSync(this.intelPath, 'utf-8'));
+        // Merge with defaults to ensure all fields exist
+        return {
+          patterns: data.patterns || defaults.patterns,
+          memories: data.memories || defaults.memories,
+          trajectories: data.trajectories || defaults.trajectories,
+          errors: data.errors || defaults.errors,
+          file_sequences: data.file_sequences || defaults.file_sequences,
+          agents: data.agents || defaults.agents,
+          edges: data.edges || defaults.edges,
+          stats: { ...defaults.stats, ...(data.stats || {}) },
+          // Preserve learning data if present
+          learning: data.learning || undefined
+        };
+      }
+    } catch {}
+    return defaults;
   }
 
   save() {
@@ -2374,11 +2388,14 @@ class Intelligence {
   // Q-learning operations - enhanced with SONA trajectory tracking
   getQ(state, action) {
     const key = `${state}|${action}`;
+    if (!this.data.patterns) this.data.patterns = {};
     return this.data.patterns[key]?.q_value ?? 0;
   }
 
   updateQ(state, action, reward) {
     const key = `${state}|${action}`;
+    if (!this.data.patterns) this.data.patterns = {};
+    if (!this.data.stats) this.data.stats = { total_patterns: 0, total_memories: 0, total_trajectories: 0, total_errors: 0, session_count: 0, last_session: 0 };
     if (!this.data.patterns[key]) {
       this.data.patterns[key] = { state, action, q_value: 0, visits: 0, last_update: 0 };
     }
@@ -2398,6 +2415,8 @@ class Intelligence {
   learn(state, action, outcome, reward) {
     const id = `traj_${this.now()}`;
     this.updateQ(state, action, reward);
+    if (!this.data.trajectories) this.data.trajectories = [];
+    if (!this.data.stats) this.data.stats = { total_patterns: 0, total_memories: 0, total_trajectories: 0, total_errors: 0, session_count: 0, last_session: 0 };
     this.data.trajectories.push({ id, state, action, outcome, reward, timestamp: this.now() });
     if (this.data.trajectories.length > 1000) this.data.trajectories.splice(0, 200);
     this.data.stats.total_trajectories = this.data.trajectories.length;
