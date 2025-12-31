@@ -6,15 +6,15 @@
 [![WASM](https://img.shields.io/badge/wasm-364KB-purple.svg)]()
 [![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen.svg)]()
 
-## Free Edge-Based AI Swarms
+## Free Self-Learning AI Swarms at the Edge
 
-**Build and deploy AI agent swarms that run entirely in web browsers, mobile devices, and edge servers - without paying for cloud infrastructure.**
+**Build and deploy self-optimizing AI agent swarms that run entirely in web browsers, mobile devices, and edge servers - without paying for cloud infrastructure.**
 
-Imagine having dozens of AI agents working together - analyzing data, routing tasks, making decisions - all running directly in your users' browsers. No API costs. No server bills. No data leaving your network. That's what @ruvector/edge makes possible.
+Imagine having dozens of AI agents working together - analyzing data, routing tasks, making decisions, and getting smarter with every interaction - all running directly in your users' browsers. No API costs. No server bills. No data leaving your network. That's what @ruvector/edge makes possible.
 
-This library gives you everything you need to build distributed AI systems: cryptographic identity for each agent, encrypted communication between them, lightning-fast vector search for finding the right agent for each task, and consensus protocols so your agents can coordinate without a central server. It's all compiled to a tiny 364KB WebAssembly binary that runs anywhere JavaScript runs.
+This library gives you everything you need to build distributed AI systems: cryptographic identity for each agent, encrypted communication between them, lightning-fast vector search for finding the right agent for each task, consensus protocols so your agents can coordinate without a central server, and self-learning neural networks that continuously optimize agent routing based on real-world outcomes. It's all compiled to a tiny 364KB WebAssembly binary that runs anywhere JavaScript runs.
 
-**The key insight:** Instead of paying cloud providers to run your AI infrastructure, you use the computing power that's already there - your users' devices. Each browser becomes a node in your swarm. The more users you have, the more powerful your system becomes, and it still costs you nothing.
+**The key insight:** Instead of paying cloud providers to run your AI infrastructure, you use the computing power that's already there - your users' devices. Each browser becomes a node in your swarm. The more users you have, the more powerful your system becomes - and with built-in self-learning capabilities (LoRA fine-tuning, EWC++ continual learning, ReasoningBank experience replay), your swarm gets smarter over time while still costing you nothing.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
