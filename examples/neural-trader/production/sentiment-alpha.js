@@ -80,47 +80,62 @@ class LexiconAnalyzer {
     ]);
   }
 
+  // Optimized analyze (avoids regex, minimizes allocations)
   analyze(text) {
-    const words = text.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/);
+    const lowerText = text.toLowerCase();
     let score = 0;
     let positiveCount = 0;
     let negativeCount = 0;
     let intensifierActive = false;
     let negatorActive = false;
+    let wordCount = 0;
 
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
+    // Extract words without regex (faster)
+    let wordStart = -1;
+    const len = lowerText.length;
 
-      // Check for intensifiers and negators
-      if (this.intensifiers.has(word)) {
-        intensifierActive = true;
-        continue;
+    for (let i = 0; i <= len; i++) {
+      const c = i < len ? lowerText.charCodeAt(i) : 32;  // Space at end
+      const isWordChar = (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 95;  // a-z, 0-9, _
+
+      if (isWordChar && wordStart === -1) {
+        wordStart = i;
+      } else if (!isWordChar && wordStart !== -1) {
+        const word = lowerText.slice(wordStart, i);
+        wordStart = -1;
+        wordCount++;
+
+        // Check for intensifiers and negators
+        if (this.intensifiers.has(word)) {
+          intensifierActive = true;
+          continue;
+        }
+        if (this.negators.has(word)) {
+          negatorActive = true;
+          continue;
+        }
+
+        // Score sentiment words
+        let wordScore = 0;
+        if (this.positiveWords.has(word)) {
+          wordScore = 1;
+          positiveCount++;
+        } else if (this.negativeWords.has(word)) {
+          wordScore = -1;
+          negativeCount++;
+        }
+
+        // Apply modifiers
+        if (wordScore !== 0) {
+          if (intensifierActive) wordScore *= 1.5;
+          if (negatorActive) wordScore *= -1;
+          score += wordScore;
+        }
+
+        // Reset modifiers
+        intensifierActive = false;
+        negatorActive = false;
       }
-      if (this.negators.has(word)) {
-        negatorActive = true;
-        continue;
-      }
-
-      // Score sentiment words
-      let wordScore = 0;
-      if (this.positiveWords.has(word)) {
-        wordScore = 1;
-        positiveCount++;
-      } else if (this.negativeWords.has(word)) {
-        wordScore = -1;
-        negativeCount++;
-      }
-
-      // Apply modifiers
-      if (wordScore !== 0) {
-        if (intensifierActive) wordScore *= 1.5;
-        if (negatorActive) wordScore *= -1;
-        score += wordScore;
-      }
-
-      // Reset modifiers
-      intensifierActive = false;
-      negatorActive = false;
     }
 
     // Normalize score
@@ -133,7 +148,7 @@ class LexiconAnalyzer {
       score: Math.max(-1, Math.min(1, normalizedScore)),
       positiveCount,
       negativeCount,
-      totalWords: words.length,
+      totalWords: wordCount,
       confidence: Math.min(1, totalSentimentWords / 10)
     };
   }

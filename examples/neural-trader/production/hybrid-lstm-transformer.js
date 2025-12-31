@@ -53,24 +53,34 @@ class LSTMCell {
   constructor(inputSize, hiddenSize) {
     this.inputSize = inputSize;
     this.hiddenSize = hiddenSize;
+    this.combinedSize = inputSize + hiddenSize;
 
     // Initialize weights (Xavier initialization)
-    const scale = Math.sqrt(2.0 / (inputSize + hiddenSize));
-    this.Wf = this.initMatrix(hiddenSize, inputSize + hiddenSize, scale);
-    this.Wi = this.initMatrix(hiddenSize, inputSize + hiddenSize, scale);
-    this.Wc = this.initMatrix(hiddenSize, inputSize + hiddenSize, scale);
-    this.Wo = this.initMatrix(hiddenSize, inputSize + hiddenSize, scale);
+    const scale = Math.sqrt(2.0 / this.combinedSize);
+    this.Wf = this.initMatrix(hiddenSize, this.combinedSize, scale);
+    this.Wi = this.initMatrix(hiddenSize, this.combinedSize, scale);
+    this.Wc = this.initMatrix(hiddenSize, this.combinedSize, scale);
+    this.Wo = this.initMatrix(hiddenSize, this.combinedSize, scale);
 
     this.bf = new Array(hiddenSize).fill(1);  // Forget gate bias = 1
     this.bi = new Array(hiddenSize).fill(0);
     this.bc = new Array(hiddenSize).fill(0);
     this.bo = new Array(hiddenSize).fill(0);
+
+    // Pre-allocate working arrays (avoid allocation in hot path)
+    this._combined = new Array(this.combinedSize);
+    this._f = new Array(hiddenSize);
+    this._i = new Array(hiddenSize);
+    this._cTilde = new Array(hiddenSize);
+    this._o = new Array(hiddenSize);
+    this._h = new Array(hiddenSize);
+    this._c = new Array(hiddenSize);
   }
 
   initMatrix(rows, cols, scale) {
-    const matrix = [];
+    const matrix = new Array(rows);
     for (let i = 0; i < rows; i++) {
-      matrix[i] = [];
+      matrix[i] = new Array(cols);
       for (let j = 0; j < cols; j++) {
         matrix[i][j] = (Math.random() - 0.5) * 2 * scale;
       }
@@ -78,45 +88,62 @@ class LSTMCell {
     return matrix;
   }
 
-  sigmoid(x) {
-    return 1 / (1 + Math.exp(-Math.max(-500, Math.min(500, x))));
-  }
-
-  tanh(x) {
-    const ex = Math.exp(2 * Math.max(-500, Math.min(500, x)));
-    return (ex - 1) / (ex + 1);
-  }
-
+  // Inline sigmoid (avoids function call overhead)
   forward(x, hPrev, cPrev) {
-    const combined = [...x, ...hPrev];
+    const hiddenSize = this.hiddenSize;
+    const inputSize = this.inputSize;
+    const combinedSize = this.combinedSize;
 
-    // Forget gate
-    const f = this.Wf.map((row, i) =>
-      this.sigmoid(row.reduce((sum, w, j) => sum + w * combined[j], 0) + this.bf[i])
-    );
+    // Reuse pre-allocated combined array
+    const combined = this._combined;
+    for (let j = 0; j < inputSize; j++) combined[j] = x[j];
+    for (let j = 0; j < hiddenSize; j++) combined[inputSize + j] = hPrev[j];
 
-    // Input gate
-    const i = this.Wi.map((row, idx) =>
-      this.sigmoid(row.reduce((sum, w, j) => sum + w * combined[j], 0) + this.bi[idx])
-    );
+    // Compute all gates with manual loops (faster than map/reduce)
+    const f = this._f, i = this._i, cTilde = this._cTilde, o = this._o;
 
-    // Candidate
-    const cTilde = this.Wc.map((row, idx) =>
-      this.tanh(row.reduce((sum, w, j) => sum + w * combined[j], 0) + this.bc[idx])
-    );
+    for (let g = 0; g < hiddenSize; g++) {
+      // Forget gate
+      let sumF = this.bf[g];
+      const rowF = this.Wf[g];
+      for (let j = 0; j < combinedSize; j++) sumF += rowF[j] * combined[j];
+      const clampedF = Math.max(-500, Math.min(500, sumF));
+      f[g] = 1 / (1 + Math.exp(-clampedF));
 
-    // Cell state
-    const c = f.map((fVal, idx) => fVal * cPrev[idx] + i[idx] * cTilde[idx]);
+      // Input gate
+      let sumI = this.bi[g];
+      const rowI = this.Wi[g];
+      for (let j = 0; j < combinedSize; j++) sumI += rowI[j] * combined[j];
+      const clampedI = Math.max(-500, Math.min(500, sumI));
+      i[g] = 1 / (1 + Math.exp(-clampedI));
 
-    // Output gate
-    const o = this.Wo.map((row, idx) =>
-      this.sigmoid(row.reduce((sum, w, j) => sum + w * combined[j], 0) + this.bo[idx])
-    );
+      // Candidate
+      let sumC = this.bc[g];
+      const rowC = this.Wc[g];
+      for (let j = 0; j < combinedSize; j++) sumC += rowC[j] * combined[j];
+      const clampedC = Math.max(-500, Math.min(500, sumC));
+      const exC = Math.exp(2 * clampedC);
+      cTilde[g] = (exC - 1) / (exC + 1);
 
-    // Hidden state
-    const h = o.map((oVal, idx) => oVal * this.tanh(c[idx]));
+      // Output gate
+      let sumO = this.bo[g];
+      const rowO = this.Wo[g];
+      for (let j = 0; j < combinedSize; j++) sumO += rowO[j] * combined[j];
+      const clampedO = Math.max(-500, Math.min(500, sumO));
+      o[g] = 1 / (1 + Math.exp(-clampedO));
+    }
 
-    return { h, c };
+    // Cell state and hidden state
+    const c = this._c, h = this._h;
+    for (let g = 0; g < hiddenSize; g++) {
+      c[g] = f[g] * cPrev[g] + i[g] * cTilde[g];
+      const clampedCg = Math.max(-500, Math.min(500, c[g]));
+      const exCg = Math.exp(2 * clampedCg);
+      h[g] = o[g] * ((exCg - 1) / (exCg + 1));
+    }
+
+    // Return copies to avoid mutation issues
+    return { h: h.slice(), c: c.slice() };
   }
 }
 
@@ -178,29 +205,58 @@ class MultiHeadAttention {
     return matrix;
   }
 
+  // Cache-friendly matmul (i-k-j loop order)
   matmul(a, b) {
     if (a.length === 0 || b.length === 0) return [];
-    const result = [];
-    for (let i = 0; i < a.length; i++) {
-      result[i] = [];
-      for (let j = 0; j < b[0].length; j++) {
-        let sum = 0;
-        for (let k = 0; k < a[0].length; k++) {
-          sum += a[i][k] * b[k][j];
+    const rowsA = a.length;
+    const colsA = a[0].length;
+    const colsB = b[0].length;
+
+    // Pre-allocate result
+    const result = new Array(rowsA);
+    for (let i = 0; i < rowsA; i++) {
+      result[i] = new Array(colsB).fill(0);
+    }
+
+    // Cache-friendly loop order: i-k-j
+    for (let i = 0; i < rowsA; i++) {
+      const rowA = a[i];
+      const rowR = result[i];
+      for (let k = 0; k < colsA; k++) {
+        const aik = rowA[k];
+        const rowB = b[k];
+        for (let j = 0; j < colsB; j++) {
+          rowR[j] += aik * rowB[j];
         }
-        result[i][j] = sum;
       }
     }
     return result;
   }
 
+  // Optimized softmax (no map/reduce)
   softmax(arr) {
-    if (arr.length === 0) return [];
+    const n = arr.length;
+    if (n === 0) return [];
+    if (n === 1) return [1.0];
+
     let max = arr[0];
-    for (let i = 1; i < arr.length; i++) if (arr[i] > max) max = arr[i];
-    const exp = arr.map(x => Math.exp(x - max));
-    const sum = exp.reduce((a, b) => a + b, 0);
-    return sum > 0 ? exp.map(x => x / sum) : arr.map(() => 1 / arr.length);
+    for (let i = 1; i < n; i++) if (arr[i] > max) max = arr[i];
+
+    const exp = new Array(n);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      exp[i] = Math.exp(arr[i] - max);
+      sum += exp[i];
+    }
+
+    if (sum === 0 || !isFinite(sum)) {
+      const uniform = 1.0 / n;
+      for (let i = 0; i < n; i++) exp[i] = uniform;
+      return exp;
+    }
+
+    for (let i = 0; i < n; i++) exp[i] /= sum;
+    return exp;
   }
 
   forward(query, key, value) {
@@ -242,6 +298,8 @@ class MultiHeadAttention {
  */
 class FeedForward {
   constructor(dModel, ffDim) {
+    this.dModel = dModel;
+    this.ffDim = ffDim;
     const scale1 = Math.sqrt(2.0 / dModel);
     const scale2 = Math.sqrt(2.0 / ffDim);
 
@@ -249,36 +307,47 @@ class FeedForward {
     this.W2 = this.initMatrix(ffDim, dModel, scale2);
     this.b1 = new Array(ffDim).fill(0);
     this.b2 = new Array(dModel).fill(0);
+
+    // Pre-allocate hidden layer
+    this._hidden = new Array(ffDim);
   }
 
   initMatrix(rows, cols, scale) {
-    return Array(rows).fill(null).map(() =>
-      Array(cols).fill(null).map(() => (Math.random() - 0.5) * 2 * scale)
-    );
-  }
-
-  relu(x) {
-    return Math.max(0, x);
+    const matrix = new Array(rows);
+    for (let i = 0; i < rows; i++) {
+      matrix[i] = new Array(cols);
+      for (let j = 0; j < cols; j++) {
+        matrix[i][j] = (Math.random() - 0.5) * 2 * scale;
+      }
+    }
+    return matrix;
   }
 
   forward(x) {
-    // First linear + ReLU
-    const hidden = this.b1.map((b, i) => {
-      let sum = b;
-      for (let j = 0; j < x.length; j++) {
+    const ffDim = this.ffDim;
+    const dModel = this.dModel;
+    const xLen = x.length;
+    const hidden = this._hidden;
+
+    // First linear + ReLU (manual loop)
+    for (let i = 0; i < ffDim; i++) {
+      let sum = this.b1[i];
+      for (let j = 0; j < xLen; j++) {
         sum += x[j] * this.W1[j][i];
       }
-      return this.relu(sum);
-    });
+      hidden[i] = sum > 0 ? sum : 0;  // Inline ReLU
+    }
 
     // Second linear
-    return this.b2.map((b, i) => {
-      let sum = b;
-      for (let j = 0; j < hidden.length; j++) {
+    const output = new Array(dModel);
+    for (let i = 0; i < dModel; i++) {
+      let sum = this.b2[i];
+      for (let j = 0; j < ffDim; j++) {
         sum += hidden[j] * this.W2[j][i];
       }
-      return sum;
-    });
+      output[i] = sum;
+    }
+    return output;
   }
 }
 
@@ -292,10 +361,30 @@ class TransformerEncoderLayer {
     this.dModel = dModel;
   }
 
+  // Optimized layerNorm (no map/reduce)
   layerNorm(x, eps = 1e-6) {
-    const mean = x.reduce((a, b) => a + b, 0) / x.length;
-    const variance = x.reduce((a, b) => a + (b - mean) ** 2, 0) / x.length;
-    return x.map(v => (v - mean) / Math.sqrt(variance + eps));
+    const n = x.length;
+    if (n === 0) return [];
+
+    // Compute mean
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += x[i];
+    const mean = sum / n;
+
+    // Compute variance
+    let varSum = 0;
+    for (let i = 0; i < n; i++) {
+      const d = x[i] - mean;
+      varSum += d * d;
+    }
+    const invStd = 1.0 / Math.sqrt(varSum / n + eps);
+
+    // Normalize
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      out[i] = (x[i] - mean) * invStd;
+    }
+    return out;
   }
 
   forward(x) {
