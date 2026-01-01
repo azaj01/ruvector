@@ -49,8 +49,12 @@ pub mod adversarial;
 pub mod evolution;
 pub mod tribute;
 pub mod pikey;
+pub mod learning;
+pub mod rac;
 
 use identity::WasmNodeIdentity;
+use learning::NetworkLearning;
+use rac::CoherenceEngine;
 use credits::{WasmCreditLedger, ContributionCurve};
 use tasks::{WasmTaskExecutor, WasmTaskQueue};
 use scheduler::WasmIdleDetector;
@@ -92,6 +96,10 @@ pub struct EdgeNetNode {
     founding: FoundingRegistry,
     /// Contribution streams
     streams: ContributionStream,
+    /// Network learning intelligence
+    learning: NetworkLearning,
+    /// Adversarial coherence engine (RAC)
+    coherence: CoherenceEngine,
 }
 
 #[wasm_bindgen]
@@ -175,6 +183,8 @@ impl EdgeNetNode {
             optimization: OptimizationEngine::new(),
             founding: FoundingRegistry::new(),
             streams: ContributionStream::new(),
+            learning: NetworkLearning::new(),
+            coherence: CoherenceEngine::new(),
         })
     }
 
@@ -440,6 +450,104 @@ impl EdgeNetNode {
     #[wasm_bindgen(js_name = getFounderCount)]
     pub fn get_founder_count(&self) -> usize {
         self.founding.get_founder_count()
+    }
+
+    // ========================================================================
+    // Learning Intelligence Methods
+    // ========================================================================
+
+    /// Record a task execution trajectory for learning
+    #[wasm_bindgen(js_name = recordLearningTrajectory)]
+    pub fn record_learning_trajectory(&self, trajectory_json: &str) -> bool {
+        self.learning.record_trajectory(trajectory_json)
+    }
+
+    /// Store a learned pattern in the reasoning bank
+    #[wasm_bindgen(js_name = storePattern)]
+    pub fn store_pattern(&self, pattern_json: &str) -> i32 {
+        self.learning.store_pattern(pattern_json)
+    }
+
+    /// Lookup similar patterns for task optimization
+    #[wasm_bindgen(js_name = lookupPatterns)]
+    pub fn lookup_patterns(&self, query_json: &str, k: usize) -> String {
+        self.learning.lookup_patterns(query_json, k)
+    }
+
+    /// Get learning statistics
+    #[wasm_bindgen(js_name = getLearningStats)]
+    pub fn get_learning_stats(&self) -> String {
+        self.learning.get_stats()
+    }
+
+    /// Get energy efficiency ratio from spike-driven attention
+    #[wasm_bindgen(js_name = getEnergyEfficiency)]
+    pub fn get_energy_efficiency(&self, seq_len: usize, hidden_dim: usize) -> f32 {
+        self.learning.get_energy_ratio(seq_len, hidden_dim)
+    }
+
+    /// Prune low-quality learned patterns
+    #[wasm_bindgen(js_name = prunePatterns)]
+    pub fn prune_patterns(&self, min_usage: usize, min_confidence: f64) -> usize {
+        self.learning.prune(min_usage, min_confidence)
+    }
+
+    /// Get trajectory count for learning analysis
+    #[wasm_bindgen(js_name = getTrajectoryCount)]
+    pub fn get_trajectory_count(&self) -> usize {
+        self.learning.trajectory_count()
+    }
+
+    /// Get stored pattern count
+    #[wasm_bindgen(js_name = getPatternCount)]
+    pub fn get_pattern_count(&self) -> usize {
+        self.learning.pattern_count()
+    }
+
+    // ========================================================================
+    // RAC Adversarial Coherence Methods (12 Axioms)
+    // ========================================================================
+
+    /// Get coherence engine event count
+    #[wasm_bindgen(js_name = getCoherenceEventCount)]
+    pub fn get_coherence_event_count(&self) -> usize {
+        self.coherence.event_count()
+    }
+
+    /// Get current Merkle root for audit (Axiom 11: Equivocation detectable)
+    #[wasm_bindgen(js_name = getMerkleRoot)]
+    pub fn get_merkle_root(&self) -> String {
+        self.coherence.get_merkle_root()
+    }
+
+    /// Get quarantined claim count (Axiom 9: Quarantine is mandatory)
+    #[wasm_bindgen(js_name = getQuarantinedCount)]
+    pub fn get_quarantined_count(&self) -> usize {
+        self.coherence.quarantined_count()
+    }
+
+    /// Get active conflict count (Axiom 6: Disagreement is signal)
+    #[wasm_bindgen(js_name = getConflictCount)]
+    pub fn get_conflict_count(&self) -> usize {
+        self.coherence.conflict_count()
+    }
+
+    /// Get coherence statistics
+    #[wasm_bindgen(js_name = getCoherenceStats)]
+    pub fn get_coherence_stats(&self) -> String {
+        self.coherence.get_stats()
+    }
+
+    /// Check if a claim can be used (not quarantined)
+    #[wasm_bindgen(js_name = canUseClaim)]
+    pub fn can_use_claim(&self, claim_id: &str) -> bool {
+        self.coherence.can_use_claim(claim_id)
+    }
+
+    /// Get quarantine level for a claim
+    #[wasm_bindgen(js_name = getClaimQuarantineLevel)]
+    pub fn get_claim_quarantine_level(&self, claim_id: &str) -> u8 {
+        self.coherence.get_quarantine_level(claim_id)
     }
 }
 
