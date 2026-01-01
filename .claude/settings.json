@@ -10,7 +10,11 @@
     "RUVECTOR_WASM_SIZE_LIMIT_KB": "3072",
     "RUVECTOR_INTELLIGENCE_ENABLED": "true",
     "RUVECTOR_LEARNING_RATE": "0.1",
-    "INTELLIGENCE_MODE": "treatment"
+    "INTELLIGENCE_MODE": "treatment",
+    "RUVECTOR_TELEMETRY_ENDPOINT": "",
+    "RUVECTOR_RETENTION_DAYS": "30",
+    "RUVECTOR_PERMISSION_MODE": "acceptEdits",
+    "RUVECTOR_SDK_INTEGRATION": "true"
   },
   "permissions": {
     "allow": [

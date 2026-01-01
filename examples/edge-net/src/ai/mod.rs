@@ -64,7 +64,7 @@ pub mod attention_unified;
 // Re-export unified attention types
 pub use attention_unified::{
     UnifiedAttention, NeuralAttention, DAGAttention, GraphAttentionNetwork, StateSpaceModel,
-    AttentionOutput, AttentionMetadata, AttentionConfig, AttentionType,
+    AttentionOutput, AttentionMetadata, UnifiedAttentionConfig, AttentionType,
     DAGNode, Edge,
 };
 

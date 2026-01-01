@@ -1031,29 +1031,32 @@ impl SimdCompute {
         n: usize,
     ) -> Vec<f32> {
         let mut y = vec![0.0f32; m];
-        let blocks_per_row = (n + Self::Q4_BLOCK_SIZE - 1) / Self::Q4_BLOCK_SIZE;
+        let total_elements = m * n;
+        let num_blocks = (total_elements + Self::Q4_BLOCK_SIZE - 1) / Self::Q4_BLOCK_SIZE;
 
         for row in 0..m {
             let mut sum = 0.0f32;
             let row_offset = row * n;
 
-            for block_idx in 0..blocks_per_row {
-                let scale = scales[row * blocks_per_row + block_idx];
-                let block_start_col = block_idx * Self::Q4_BLOCK_SIZE;
-                let block_end_col = (block_start_col + Self::Q4_BLOCK_SIZE).min(n);
-                let byte_offset = (row_offset + block_start_col) / 2;
+            for col in 0..n {
+                let idx = row_offset + col;
+                // Find which block this element belongs to
+                let block_idx = idx / Self::Q4_BLOCK_SIZE;
+                let scale = if block_idx < scales.len() {
+                    scales[block_idx]
+                } else {
+                    // Fallback for last partial block
+                    scales.last().copied().unwrap_or(1.0)
+                };
 
-                for col in block_start_col..block_end_col {
-                    let idx = row_offset + col;
-                    let byte = data[idx / 2];
-                    let q = if idx % 2 == 0 {
-                        (byte & 0x0F) as i8
-                    } else {
-                        ((byte >> 4) & 0x0F) as i8
-                    };
-                    let q = if q > 7 { q - 16 } else { q };
-                    sum += q as f32 * scale * x[col];
-                }
+                let byte = data[idx / 2];
+                let q = if idx % 2 == 0 {
+                    (byte & 0x0F) as i8
+                } else {
+                    ((byte >> 4) & 0x0F) as i8
+                };
+                let q = if q > 7 { q - 16 } else { q };
+                sum += q as f32 * scale * x[col];
             }
 
             y[row] = sum;

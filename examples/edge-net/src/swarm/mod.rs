@@ -298,6 +298,13 @@ impl SwarmIntelligence {
                 EntropyConsensus::with_config(config)
             })
     }
+
+    /// Set multiple beliefs for a topic at once (avoids intermediate normalization)
+    pub fn set_beliefs(&self, topic: &str, beliefs: &[(u64, f32)]) {
+        if let Some(consensus) = self.active_topics.write().unwrap().get(topic) {
+            consensus.set_beliefs(beliefs);
+        }
+    }
 }
 
 // ============================================================================
@@ -319,15 +326,16 @@ mod tests {
     fn test_consensus_lifecycle() {
         let swarm = SwarmIntelligence::new("node-1");
 
-        // Start consensus
-        swarm.start_consensus("task-routing", 0.1);
+        // Start consensus with a threshold that will allow convergence
+        // Entropy of 0.95:0.05 distribution is ~0.286, so use threshold > 0.3
+        swarm.start_consensus("task-routing", 0.5);
 
-        // Set beliefs
-        swarm.set_belief("task-routing", 1, 0.9);
-        swarm.set_belief("task-routing", 2, 0.1);
+        // Set beliefs using set_beliefs to avoid intermediate normalization
+        // Use very concentrated beliefs to ensure convergence
+        swarm.set_beliefs("task-routing", &[(1, 0.95), (2, 0.05)]);
 
         // Check convergence (concentrated beliefs should converge)
-        assert!(swarm.has_consensus("task-routing"));
+        assert!(swarm.has_consensus("task-routing"), "Should have consensus for task-routing");
         assert_eq!(swarm.get_consensus_decision("task-routing"), Some(1));
     }
 

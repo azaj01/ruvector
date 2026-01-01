@@ -3,11 +3,21 @@
 //! This module provides patterns and scenarios for training the
 //! RuVector self-learning hooks system, with full Claude Agent SDK
 //! and MCP integration support.
+//!
+//! ## Four Attention Mechanisms
+//!
+//! | Attention Type | Question Answered | Application |
+//! |---------------|-------------------|-------------|
+//! | **Neural** | What words matter? | Token/semantic relevance |
+//! | **DAG** | What steps matter? | Execution order, dependencies |
+//! | **Graph** | What relationships matter? | Code structure, call graphs |
+//! | **State Space** | What history still matters? | Context persistence |
 
 pub mod error_recovery;
 pub mod file_sequences;
 pub mod sdk_integration;
 pub mod mcp_tools;
+pub mod attention_patterns;
 
 pub use error_recovery::error_patterns::{ErrorLearningTracker, ErrorPattern, RecoveryStrategy};
 pub use file_sequences::sequence_tracker::{EditSequence, FileEdit, SequencePattern, SequenceTracker};
@@ -18,6 +28,11 @@ pub use sdk_integration::{
 pub use mcp_tools::{
     McpToolDef, PropertyDef, ToolCategory, ToolInputSchema,
     get_ruvector_tools, generate_tools_list_json,
+};
+pub use attention_patterns::{
+    NeuralAttention, DagAttention, GraphAttention, StateSpaceAttention,
+    AttentionOrchestrator, AttentionAnalysis,
+    DagNode, StepType, GraphNode, GraphEdge, NodeType, EdgeType, HistoryEntry,
 };
 
 /// Initialize the learning scenarios system

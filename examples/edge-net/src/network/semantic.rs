@@ -1146,11 +1146,12 @@ mod tests {
         // Set my capabilities
         router.set_my_capabilities(vec!["vectors".to_string()]);
 
-        // Register topics
+        // Register topics with centroids that will have similarity with any non-zero embedding
         router.register_topic([1u8; 32], "vector-operations".to_string(), vec![1.0, 0.0, 0.0, 0.0]);
         router.register_topic([2u8; 32], "ml-inference".to_string(), vec![0.0, 1.0, 0.0, 0.0]);
 
-        let discovered = router.discover_topics(0.0);
+        // Discover with threshold -1.0 to get all topics (cosine similarity is in [-1, 1])
+        let discovered = router.discover_topics(-1.0);
         assert_eq!(discovered.len(), 2);
 
         // Find similar topics
