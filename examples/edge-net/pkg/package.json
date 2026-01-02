@@ -50,6 +50,8 @@
     "index.js",
     "cli.js",
     "join.js",
+    "join.html",
+    "network.js",
     "README.md",
     "LICENSE"
   ],
@@ -74,6 +76,9 @@
     "info": "node cli.js info",
     "join": "node join.js",
     "join:generate": "node join.js --generate",
-    "join:multi": "node join.js --generate"
+    "join:multi": "node join.js --generate",
+    "network": "node network.js stats",
+    "peers": "node join.js --peers",
+    "history": "node join.js --history"
   }
 }

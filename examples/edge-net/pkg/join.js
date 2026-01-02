@@ -19,6 +19,7 @@ import { dirname, join } from 'path';
 import { webcrypto } from 'crypto';
 import { performance } from 'perf_hooks';
 import { homedir } from 'os';
+import { NetworkManager } from './network.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -723,6 +724,120 @@ async function showStatus(wasm, piKey) {
   coherence.free();
 }
 
+// Show peers from network module
+async function showPeers() {
+  console.log(`${c('bold', 'NETWORK PEERS:')}\n`);
+
+  try {
+    const { promises: fs } = await import('fs');
+    const peersFile = join(homedir(), '.ruvector', 'network', 'peers.json');
+
+    if (!existsSync(peersFile)) {
+      console.log(`  ${c('dim', 'No peers found. Join the network first.')}\n`);
+      return;
+    }
+
+    const peers = JSON.parse(await fs.readFile(peersFile, 'utf-8'));
+
+    if (peers.length === 0) {
+      console.log(`  ${c('dim', 'No peers discovered yet.')}\n`);
+      return;
+    }
+
+    console.log(`  ${c('cyan', 'Found')} ${peers.length} ${c('cyan', 'peers:')}\n`);
+
+    for (const peer of peers) {
+      const timeSince = Date.now() - peer.lastSeen;
+      const isActive = timeSince < 300000; // 5 minutes
+      const status = isActive ? c('green', '● Active') : c('dim', '○ Inactive');
+
+      console.log(`  ${status} ${c('bold', peer.siteId)}`);
+      console.log(`    ${c('dim', 'Pi-Key:')}      π:${peer.piKey.slice(0, 12)}...`);
+      console.log(`    ${c('dim', 'Public Key:')} ${peer.publicKey.slice(0, 16)}...`);
+      console.log(`    ${c('dim', 'First Seen:')} ${new Date(peer.firstSeen).toLocaleString()}`);
+      console.log(`    ${c('dim', 'Last Seen:')}  ${new Date(peer.lastSeen).toLocaleString()}`);
+      console.log(`    ${c('dim', 'Verified:')}   ${peer.verified ? c('green', '✓ Yes') : c('yellow', '○ No')}`);
+      console.log('');
+    }
+  } catch (err) {
+    console.log(`  ${c('red', '✗')} Error reading peers: ${err.message}\n`);
+  }
+}
+
+// Show network/QDAG statistics
+async function showNetworkStats() {
+  console.log(`${c('bold', 'NETWORK STATISTICS:')}\n`);
+
+  try {
+    const { promises: fs } = await import('fs');
+    const qdagFile = join(homedir(), '.ruvector', 'network', 'qdag.json');
+
+    if (!existsSync(qdagFile)) {
+      console.log(`  ${c('dim', 'No QDAG data found. Join the network first.')}\n`);
+      return;
+    }
+
+    const qdag = JSON.parse(await fs.readFile(qdagFile, 'utf-8'));
+
+    const contributions = (qdag.nodes || []).filter(n => n.type === 'contribution');
+    const contributors = new Set(contributions.map(c => c.contributor));
+    const totalCredits = contributions.reduce((sum, c) => sum + (c.credits || 0), 0);
+    const totalCompute = contributions.reduce((sum, c) => sum + (c.computeUnits || 0), 0);
+
+    console.log(`${c('bold', 'QDAG Ledger:')}`);
+    console.log(`  ${c('cyan', 'Total Nodes:')}       ${qdag.nodes?.length || 0}`);
+    console.log(`  ${c('cyan', 'Confirmed:')}         ${qdag.confirmed?.length || 0}`);
+    console.log(`  ${c('cyan', 'Current Tips:')}      ${qdag.tips?.length || 0}`);
+    console.log('');
+
+    console.log(`${c('bold', 'Contributions:')}`);
+    console.log(`  ${c('cyan', 'Total:')}             ${contributions.length}`);
+    console.log(`  ${c('cyan', 'Contributors:')}      ${contributors.size}`);
+    console.log(`  ${c('cyan', 'Total Credits:')}     ${totalCredits}`);
+    console.log(`  ${c('cyan', 'Compute Units:')}     ${totalCompute.toLocaleString()}`);
+    console.log('');
+
+    // Show top contributors
+    if (contributors.size > 0) {
+      console.log(`${c('bold', 'Top Contributors:')}`);
+      const contributorStats = {};
+      for (const contrib of contributions) {
+        if (!contributorStats[contrib.contributor]) {
+          contributorStats[contrib.contributor] = { credits: 0, count: 0, siteId: contrib.siteId };
+        }
+        contributorStats[contrib.contributor].credits += contrib.credits || 0;
+        contributorStats[contrib.contributor].count++;
+      }
+
+      const sorted = Object.entries(contributorStats)
+        .sort((a, b) => b[1].credits - a[1].credits)
+        .slice(0, 5);
+
+      for (const [piKey, stats] of sorted) {
+        console.log(`  ${c('green', '★')} ${stats.siteId || piKey.slice(0, 12)} - ${stats.credits} credits (${stats.count} contributions)`);
+      }
+      console.log('');
+    }
+
+    // Show recent activity
+    const recentContribs = contributions
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 5);
+
+    if (recentContribs.length > 0) {
+      console.log(`${c('bold', 'Recent Activity:')}`);
+      for (const contrib of recentContribs) {
+        const time = new Date(contrib.timestamp).toLocaleTimeString();
+        console.log(`  ${c('dim', time)} ${contrib.siteId || contrib.contributor.slice(0, 8)} +${contrib.credits} credits`);
+      }
+      console.log('');
+    }
+
+  } catch (err) {
+    console.log(`  ${c('red', '✗')} Error reading network stats: ${err.message}\n`);
+  }
+}
+
 // Multi-contributor demonstration
 async function demonstrateMultiContributor(wasm) {
   console.log(`${c('bold', 'MULTI-CONTRIBUTOR DEMONSTRATION')}\n`);
@@ -820,6 +935,18 @@ async function main() {
     return;
   }
 
+  // Handle --peers (show network peers)
+  if (opts.peers) {
+    await showPeers();
+    return;
+  }
+
+  // Handle --network (show network/QDAG stats)
+  if (args.includes('--network')) {
+    await showNetworkStats();
+    return;
+  }
+
   let piKey = null;
   let persistentIdentity = null;
 
@@ -913,6 +1040,20 @@ async function joinNetworkPersistent(wasm, opts, identity) {
   const evolution = new wasm.EvolutionEngine();
   const events = new wasm.NetworkEvents();
 
+  // Initialize network manager for QDAG and peer discovery
+  let networkManager = null;
+  try {
+    networkManager = new NetworkManager({
+      piKey: identity.meta.shortId,
+      publicKey: publicKeyHex,
+      siteId: opts.site
+    });
+    await networkManager.initialize();
+  } catch (err) {
+    console.log(`  ${c('yellow', '⚠')} Network module unavailable: ${err.message}`);
+    console.log(`  ${c('dim', 'Running in local mode (contributions recorded locally)')}\n`);
+  }
+
   console.log(`${c('bold', 'CONTRIBUTOR NODE:')}`);
   console.log(`  ${c('cyan', 'Site ID:')}       ${opts.site}`);
   console.log(`  ${c('cyan', 'Short ID:')}      ${identity.meta.shortId}`);
@@ -920,7 +1061,7 @@ async function joinNetworkPersistent(wasm, opts, identity) {
   console.log(`  ${c('cyan', 'Member Since:')}  ${new Date(identity.meta.createdAt).toLocaleDateString()}`);
   console.log(`  ${c('cyan', 'Sessions:')}      ${identity.meta.totalSessions}`);
   console.log(`  ${c('cyan', 'Status:')}        ${c('green', 'Connected')}`);
-  console.log(`  ${c('cyan', 'Mode:')}          Persistent\n`);
+  console.log(`  ${c('cyan', 'Mode:')}          Persistent + QDAG\n`);
 
   console.log(`${c('bold', 'ACTIVE COMPONENTS:')}`);
   console.log(`  ${c('green', '✓')} Byzantine Detector (threshold=0.5)`);
@@ -928,16 +1069,30 @@ async function joinNetworkPersistent(wasm, opts, identity) {
   console.log(`  ${c('green', '✓')} Federated Model (dim=100)`);
   console.log(`  ${c('green', '✓')} Coherence Engine`);
   console.log(`  ${c('green', '✓')} Evolution Engine`);
+  console.log(`  ${c('green', '✓')} QDAG Ledger (contribution tracking)`);
+  console.log(`  ${c('green', '✓')} Peer Discovery (P2P network)`);
 
   // Get themed status
   const themedStatus = events.getThemedStatus(1, BigInt(identity.meta.totalContributions || 0));
   console.log(`\n${c('bold', 'NETWORK STATUS:')}`);
-  console.log(`  ${themedStatus}\n`);
+  console.log(`  ${themedStatus}`);
+
+  // Show network stats if available
+  if (networkManager) {
+    const netStats = networkManager.getNetworkStats();
+    const myStats = networkManager.getMyStats();
+    console.log(`  ${c('cyan', 'QDAG Nodes:')}     ${netStats.totalNodes}`);
+    console.log(`  ${c('cyan', 'Contributors:')}   ${netStats.uniqueContributors}`);
+    console.log(`  ${c('cyan', 'Total Credits:')}  ${netStats.totalCredits}`);
+    console.log(`  ${c('cyan', 'My Credits:')}     ${myStats.totalCredits}`);
+  }
+  console.log('');
 
   // Show persistence info
   console.log(`${c('bold', 'PERSISTENCE:')}`);
   console.log(`  ${c('dim', 'Identity stored at:')} ${identity.identityPath}`);
   console.log(`  ${c('dim', 'History stored at:')}  ${identity.contributionPath}`);
+  console.log(`  ${c('dim', 'QDAG Ledger at:')}     ~/.ruvector/network/qdag.json`);
   console.log(`  ${c('dim', 'Your contributions are preserved across sessions (months/years).')}\n`);
 
   console.log(`${c('green', '✓ Successfully joined Edge-Net!')}\n`);
@@ -946,28 +1101,42 @@ async function joinNetworkPersistent(wasm, opts, identity) {
   // Keep running with periodic status updates and contribution tracking
   let ticks = 0;
   let contributions = 0;
-  const statusInterval = setInterval(() => {
+  let totalCredits = 0;
+  const statusInterval = setInterval(async () => {
     ticks++;
 
     // Simulate contribution every 5 seconds
     if (ticks % 5 === 0) {
       contributions++;
-      identity.recordContribution('compute', { duration: 5, tick: ticks });
+      const computeUnits = Math.floor(Math.random() * 500) + 100;
+      const credits = Math.floor(computeUnits / 100);
+      totalCredits += credits;
+
+      // Record to local history
+      identity.recordContribution('compute', { duration: 5, tick: ticks, computeUnits, credits });
+
+      // Record to QDAG ledger
+      if (networkManager) {
+        const taskId = `task-${Date.now().toString(36)}`;
+        await networkManager.recordContribution(taskId, computeUnits);
+      }
     }
 
     const motivation = events.getMotivation(BigInt(ticks * 10));
     if (ticks % 10 === 0) {
-      console.log(`  ${c('dim', `[${ticks}s]`)} ${c('cyan', 'Contributing...')} ${contributions} total | ${motivation}`);
+      const peerCount = networkManager ? networkManager.getPeers().length : 0;
+      console.log(`  ${c('dim', `[${ticks}s]`)} ${c('cyan', 'Contributing...')} ${contributions} tasks | ${totalCredits} credits | ${peerCount} peers | ${motivation}`);
     }
   }, 1000);
 
   process.on('SIGINT', () => {
     clearInterval(statusInterval);
     console.log(`\n${c('yellow', 'Disconnected from Edge-Net.')}`);
-    console.log(`${c('green', '✓')} Session recorded: ${contributions} contributions`);
-    console.log(`${c('dim', 'Your identity and history are preserved. Rejoin anytime.')}\n`);
+    console.log(`${c('green', '✓')} Session recorded: ${contributions} contributions, ${totalCredits} credits`);
+    console.log(`${c('dim', 'Your identity, history, and QDAG records are preserved. Rejoin anytime.')}\n`);
 
-    // Clean up WASM resources
+    // Clean up resources
+    if (networkManager) networkManager.stop();
     detector.free();
     dp.free();
     model.free();
