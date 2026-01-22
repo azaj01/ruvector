@@ -561,15 +561,61 @@ RETURN related
 <details>
 <summary>📖 Documentation</summary>
 
+#### Getting Started
+
 | Topic | Link |
 |-------|------|
 | Getting Started | [docs/guides/GETTING_STARTED.md](./docs/guides/GETTING_STARTED.md) |
+| API Reference | [docs/api/](./docs/api/) |
 | Cypher Reference | [docs/api/CYPHER_REFERENCE.md](./docs/api/CYPHER_REFERENCE.md) |
-| GNN Architecture | [docs/gnn/gnn-layer-implementation.md](./docs/gnn/gnn-layer-implementation.md) |
+| Performance Tuning | [docs/optimization/PERFORMANCE_TUNING_GUIDE.md](./docs/optimization/PERFORMANCE_TUNING_GUIDE.md) |
+
+#### Core Components
+
+| Topic | Link |
+|-------|------|
+| GNN Architecture | [docs/gnn/](./docs/gnn/) |
+| HNSW Indexing | [docs/hnsw/](./docs/hnsw/) |
+| DAG System | [docs/dag/](./docs/dag/) |
+| Nervous System | [docs/nervous-system/](./docs/nervous-system/) |
+| Sparse Inference | [docs/sparse-inference/](./docs/sparse-inference/) |
+
+#### Bindings & Integration
+
+| Topic | Link |
+|-------|------|
 | Node.js API | [crates/ruvector-gnn-node/README.md](./crates/ruvector-gnn-node/README.md) |
 | WASM API | [crates/ruvector-gnn-wasm/README.md](./crates/ruvector-gnn-wasm/README.md) |
-| Performance Tuning | [docs/optimization/PERFORMANCE_TUNING_GUIDE.md](./docs/optimization/PERFORMANCE_TUNING_GUIDE.md) |
-| API Reference | [docs/api/](./docs/api/) |
+| PostgreSQL | [docs/postgres/](./docs/postgres/) |
+| Self-Learning Hooks | [docs/hooks/](./docs/hooks/) |
+| Integration Guides | [docs/integration/](./docs/integration/) |
+
+#### LLM & AI
+
+| Topic | Link |
+|-------|------|
+| RuvLLM | [docs/ruvllm/](./docs/ruvllm/) |
+| Training Guides | [docs/training/](./docs/training/) |
+
+#### Operations
+
+| Topic | Link |
+|-------|------|
+| Architecture | [docs/architecture/](./docs/architecture/) |
+| Cloud Deployment | [docs/cloud-architecture/](./docs/cloud-architecture/) |
+| Security | [docs/security/](./docs/security/) |
+| Benchmarks | [docs/benchmarks/](./docs/benchmarks/) |
+| Testing | [docs/testing/](./docs/testing/) |
+
+#### Research
+
+| Topic | Link |
+|-------|------|
+| Research Papers | [docs/research/](./docs/research/) |
+| GNN V2 Features | [docs/research/gnn-v2/](./docs/research/gnn-v2/) |
+| Min-Cut Algorithms | [docs/research/mincut/](./docs/research/mincut/) |
+| SPARQL Support | [docs/research/sparql/](./docs/research/sparql/) |
+| Latent Space | [docs/research/latent-space/](./docs/research/latent-space/) |
 
 ### Architecture Decision Records (ADRs)
 
@@ -701,6 +747,10 @@ All crates are published to [crates.io](https://crates.io) under the `ruvector-*
 | [ruvector-filter](./crates/ruvector-filter) | Vector filtering and metadata queries | [![crates.io](https://img.shields.io/crates/v/ruvector-filter.svg)](https://crates.io/crates/ruvector-filter) |
 | [ruvector-metrics](./crates/ruvector-metrics) | Performance metrics and monitoring | [![crates.io](https://img.shields.io/crates/v/ruvector-metrics.svg)](https://crates.io/crates/ruvector-metrics) |
 | [ruvector-snapshot](./crates/ruvector-snapshot) | Snapshot and persistence management | [![crates.io](https://img.shields.io/crates/v/ruvector-snapshot.svg)](https://crates.io/crates/ruvector-snapshot) |
+| [ruvector-node](./crates/ruvector-node) | Node.js bindings via NAPI-RS | [![crates.io](https://img.shields.io/crates/v/ruvector-node.svg)](https://crates.io/crates/ruvector-node) |
+| [ruvector-wasm](./crates/ruvector-wasm) | WASM bindings for browser/edge | [![crates.io](https://img.shields.io/crates/v/ruvector-wasm.svg)](https://crates.io/crates/ruvector-wasm) |
+| [ruvector-cli](./crates/ruvector-cli) | CLI and MCP server | [![crates.io](https://img.shields.io/crates/v/ruvector-cli.svg)](https://crates.io/crates/ruvector-cli) |
+| [ruvector-bench](./crates/ruvector-bench) | Benchmarking suite | [![crates.io](https://img.shields.io/crates/v/ruvector-bench.svg)](https://crates.io/crates/ruvector-bench) |
 
 ### Graph & GNN
 
@@ -758,6 +808,7 @@ wget https://huggingface.co/ruv/ruvltra/resolve/main/ruvltra-small-0.5b-q4_k_m.g
 | [ruvector-cluster](./crates/ruvector-cluster) | Cluster management and coordination | [![crates.io](https://img.shields.io/crates/v/ruvector-cluster.svg)](https://crates.io/crates/ruvector-cluster) |
 | [ruvector-raft](./crates/ruvector-raft) | Raft consensus implementation | [![crates.io](https://img.shields.io/crates/v/ruvector-raft.svg)](https://crates.io/crates/ruvector-raft) |
 | [ruvector-replication](./crates/ruvector-replication) | Data replication and synchronization | [![crates.io](https://img.shields.io/crates/v/ruvector-replication.svg)](https://crates.io/crates/ruvector-replication) |
+| [ruvector-server](./crates/ruvector-server) | REST/gRPC API server | [![crates.io](https://img.shields.io/crates/v/ruvector-server.svg)](https://crates.io/crates/ruvector-server) |
 
 ### AI Agent Routing (Tiny Dancer)
 
@@ -854,12 +905,42 @@ let syndrome = gate.assess_coherence(&quantum_state)?;
 | [ruvector-economy-wasm](./crates/ruvector-economy-wasm) | CRDT-based autonomous credit economy | [![crates.io](https://img.shields.io/crates/v/ruvector-economy-wasm.svg)](https://crates.io/crates/ruvector-economy-wasm) |
 | [ruvector-exotic-wasm](./crates/ruvector-exotic-wasm) | Exotic AI primitives (strange loops, time crystals) | [![crates.io](https://img.shields.io/crates/v/ruvector-exotic-wasm.svg)](https://crates.io/crates/ruvector-exotic-wasm) |
 | [ruvector-attention-unified-wasm](./crates/ruvector-attention-unified-wasm) | Unified 18+ attention mechanisms (Neural, DAG, Mamba SSM) | [![crates.io](https://img.shields.io/crates/v/ruvector-attention-unified-wasm.svg)](https://crates.io/crates/ruvector-attention-unified-wasm) |
+| [micro-hnsw-wasm](./crates/micro-hnsw-wasm) | Neuromorphic HNSW with spiking neurons (11.8KB WASM) | [![crates.io](https://img.shields.io/crates/v/micro-hnsw-wasm.svg)](https://crates.io/crates/micro-hnsw-wasm) |
 
 **Bio-inspired features:**
 - **Spiking Neural Networks (SNNs)** — 10-50x energy efficiency vs traditional ANNs
 - **BTSP Learning** — Behavioral Time-Scale Synaptic Plasticity for rapid adaptation
 - **MicroLoRA** — Sub-microsecond fine-tuning for per-operator learning
 - **Mamba SSM** — State Space Model attention for linear-time sequences
+
+### Self-Learning (SONA)
+
+| Crate | Description | crates.io |
+|-------|-------------|-----------|
+| [sona](./crates/sona) | Self-Optimizing Neural Architecture - LoRA, EWC++, ReasoningBank | [![crates.io](https://img.shields.io/crates/v/ruvector-sona.svg)](https://crates.io/crates/ruvector-sona) |
+
+**SONA Features:** Two-tier LoRA adaptation, Elastic Weight Consolidation (EWC++), ReasoningBank for trajectory learning, runtime-adaptive learning for LLM routers.
+
+### Standalone Edge Database (rvLite)
+
+| Crate | Description | crates.io |
+|-------|-------------|-----------|
+| [rvlite](./crates/rvlite) | Standalone 2MB edge database with SQL, SPARQL, Cypher | [![crates.io](https://img.shields.io/crates/v/rvlite.svg)](https://crates.io/crates/rvlite) |
+
+**rvLite Features:** Powered by RuVector WASM, supports SQL/SPARQL/Cypher queries, ideal for IoT, mobile, and embedded systems.
+
+### PostgreSQL Extension
+
+| Crate | Description | crates.io |
+|-------|-------------|-----------|
+| [ruvector-postgres](./crates/ruvector-postgres) | pgvector replacement with 230+ SQL functions, SIMD, Flash Attention | [![crates.io](https://img.shields.io/crates/v/ruvector-postgres.svg)](https://crates.io/crates/ruvector-postgres) |
+
+**PostgreSQL Features:** Drop-in pgvector replacement, GNN layers, hybrid search, multi-tenancy, self-healing, self-learning capabilities.
+
+```bash
+docker pull ruvnet/ruvector-postgres    # Docker image
+cargo add ruvector-postgres             # Rust crate
+```
 
 ### Self-Learning Query DAG (ruvector-dag)
 
@@ -2635,7 +2716,6 @@ See [ruvector-postgres README](./crates/ruvector-postgres/README.md) for full SQ
 | [ruvector-filter](./crates/ruvector-filter) | Metadata filtering and query predicates | [![crates.io](https://img.shields.io/crates/v/ruvector-filter.svg)](https://crates.io/crates/ruvector-filter) |
 | [ruvector-collections](./crates/ruvector-collections) | Multi-tenant collection management | [![crates.io](https://img.shields.io/crates/v/ruvector-collections.svg)](https://crates.io/crates/ruvector-collections) |
 | [ruvector-snapshot](./crates/ruvector-snapshot) | Point-in-time snapshots and backups | [![crates.io](https://img.shields.io/crates/v/ruvector-snapshot.svg)](https://crates.io/crates/ruvector-snapshot) |
-| [profiling](./crates/profiling) | Performance profiling and analysis tools | [![crates.io](https://img.shields.io/crates/v/ruvector-profiling.svg)](https://crates.io/crates/ruvector-profiling) |
 | [micro-hnsw-wasm](./crates/micro-hnsw-wasm) | Lightweight HNSW implementation for WASM | [![crates.io](https://img.shields.io/crates/v/micro-hnsw-wasm.svg)](https://crates.io/crates/micro-hnsw-wasm) |
 
 ### Embedded & IoT
