@@ -235,12 +235,61 @@ Benefits: **75% cost reduction**, **352x faster** for Tier 1 tasks.
 │ Layer 2: Authentication (JWT RS256, OAuth 2.0, rate limiting)  │
 │ Layer 3: Authorization (RBAC, claims, tenant isolation)        │
 │ Layer 4: Data Protection (AES-256-GCM, key rotation)           │
-│ Layer 5: Input Validation (Zod schemas, injection prevention)  │
+│ Layer 5: AIDefence (prompt injection, jailbreak, PII)          │
 │ Layer 6: WASM Sandbox (memory isolation, resource limits)      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 Compliance Ready: **GDPR**, **SOC 2**, **HIPAA** (configurable).
+
+## AI Defense (aidefence Integration)
+
+RuvBot integrates [aidefence](https://www.npmjs.com/package/aidefence) for production-ready adversarial protection.
+
+### Features
+
+- **Prompt Injection Detection** (<10ms) - 50+ injection patterns
+- **Jailbreak Prevention** - DAN, bypass, unlimited mode detection
+- **PII Protection** - Email, phone, SSN, credit cards, API keys
+- **Unicode Normalization** - Homoglyph attack prevention
+- **Behavioral Analysis** - User baseline deviation detection
+- **Audit Logging** - Full threat tracking for compliance
+
+### Usage
+
+```typescript
+import { createAIDefenceGuard, createAIDefenceMiddleware } from '@ruvector/ruvbot';
+
+// Create guard
+const guard = createAIDefenceGuard({
+  detectPromptInjection: true,
+  detectJailbreak: true,
+  detectPII: true,
+  blockThreshold: 'medium',
+});
+
+// Analyze input
+const result = await guard.analyze(userInput);
+if (!result.safe) {
+  console.log('Threats:', result.threats);
+  const safeInput = result.sanitizedInput;
+}
+
+// Or use middleware
+const middleware = createAIDefenceMiddleware();
+const { allowed, sanitizedInput } = await middleware.validateInput(input);
+```
+
+### Threat Detection
+
+| Threat | Severity | Latency |
+|--------|----------|---------|
+| Prompt Injection | High | <5ms |
+| Jailbreak | Critical | <5ms |
+| PII Exposure | Medium-Critical | <3ms |
+| Control Characters | Medium | <1ms |
+
+See [ADR-014: AIDefence Integration](docs/adr/ADR-014-aidefence-integration.md) for details.
 
 ## Background Workers
 
