@@ -53,6 +53,9 @@ export * from './swarm/index.js';
 // Security Context
 export * from './security/index.js';
 
+// Plugins Context
+export * from './plugins/index.js';
+
 // Types - exclude duplicates (DomainEvent, EventHandler already exported from infrastructure)
 export type {
   TenantId,

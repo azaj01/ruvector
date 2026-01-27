@@ -291,6 +291,45 @@ const { allowed, sanitizedInput } = await middleware.validateInput(input);
 
 See [ADR-014: AIDefence Integration](docs/adr/ADR-014-aidefence-integration.md) for details.
 
+## Plugin System
+
+RuvBot includes an extensible plugin system inspired by claude-flow's IPFS-based registry.
+
+### Features
+
+- **Plugin Discovery**: Auto-load plugins from `./plugins` directory
+- **Lifecycle Management**: Install, enable, disable, unload plugins
+- **Hot-Reload**: Dynamic plugin loading without restart
+- **Sandboxed Execution**: Permission-based access control
+- **IPFS Registry**: Optional decentralized plugin distribution
+
+### Usage
+
+```typescript
+import { createPluginManager } from '@ruvector/ruvbot';
+
+// Create and initialize plugin manager
+const plugins = createPluginManager({
+  pluginsDir: './plugins',
+  autoLoad: true,
+});
+await plugins.initialize();
+
+// List plugins and skills
+console.log(plugins.listPlugins());
+const skills = plugins.getPluginSkills();
+```
+
+### Plugin Permissions
+
+| Permission | Description |
+|------------|-------------|
+| `memory:read` | Read from memory store |
+| `memory:write` | Write to memory store |
+| `skill:register` | Register new skills |
+| `llm:invoke` | Invoke LLM providers |
+| `http:outbound` | Make external HTTP requests |
+
 ## Background Workers
 
 | Worker | Priority | Purpose |
