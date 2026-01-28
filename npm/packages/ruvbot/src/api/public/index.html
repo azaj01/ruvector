@@ -689,6 +689,7 @@
 
     // Create session
     async function createSession() {
+      console.log('[RuvBot] Creating new session...');
       try {
         const res = await fetch('/api/sessions', {
           method: 'POST',
@@ -696,10 +697,11 @@
           body: JSON.stringify({ agentId: 'default-agent' })
         });
         const data = await res.json();
+        console.log('[RuvBot] Session created:', data);
         sessionId = data.id || data.sessionId;
         return sessionId;
       } catch (err) {
-        console.error('Failed to create session:', err);
+        console.error('[RuvBot] Failed to create session:', err);
         throw err;
       }
     }
@@ -730,6 +732,9 @@
         }
 
         // Send chat request
+        console.log('[RuvBot] Sending message:', { sessionId, message, model: modelSelect.value });
+        const startTime = performance.now();
+
         const res = await fetch(`/api/sessions/${sessionId}/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -739,18 +744,24 @@
           })
         });
 
+        const responseTime = (performance.now() - startTime).toFixed(0);
+        console.log(`[RuvBot] Response received in ${responseTime}ms, status: ${res.status}`);
+
         if (!res.ok) {
           const error = await res.json();
+          console.error('[RuvBot] API error:', error);
           throw new Error(error.message || error.error || 'Request failed');
         }
 
         const data = await res.json();
+        console.log('[RuvBot] Chat response:', data);
 
         // Remove typing indicator
         typingEl.remove();
 
         // Add assistant message
         const content = data.content || data.message || data.response || 'No response';
+        console.log('[RuvBot] Displaying content:', content.substring(0, 100) + '...');
         addMessage('assistant', content);
 
       } catch (err) {
@@ -842,18 +853,32 @@
         .replace(/(<\/[hul].*>)<\/p>/g, '$1');
     }
 
-    // Check API health
+    // Check API health and status
     async function checkHealth() {
+      console.log('[RuvBot] Checking system health...');
       try {
-        const res = await fetch('/health');
-        const data = await res.json();
-        console.log('RuvBot health:', data);
+        const [healthRes, statusRes] = await Promise.all([
+          fetch('/health'),
+          fetch('/api/status')
+        ]);
+        const health = await healthRes.json();
+        const status = await statusRes.json();
+        console.log('[RuvBot] Health:', health);
+        console.log('[RuvBot] Status:', status);
+
+        // Show LLM status indicator
+        if (status.llm?.configured) {
+          console.log('[RuvBot] LLM configured:', status.llm.provider, status.llm.model);
+        } else {
+          console.warn('[RuvBot] LLM not configured! Check ANTHROPIC_API_KEY or OPENROUTER_API_KEY');
+        }
       } catch (err) {
-        console.warn('Health check failed:', err);
+        console.warn('[RuvBot] Health check failed:', err);
       }
     }
 
     // Init
+    console.log('[RuvBot] Chat UI initialized');
     checkHealth();
     inputEl.focus();
   </script>

@@ -90,3 +90,9 @@ export {
   type OpenRouterConfig,
   type OpenRouterModel,
 } from './OpenRouterProvider.js';
+
+export {
+  createGoogleAIProvider,
+  type GoogleAIConfig,
+  type GoogleAIModel,
+} from './GoogleAIProvider.js';

@@ -197,7 +197,7 @@ async function handleHealth(ctx: RequestContext): Promise<void> {
   const { res } = ctx;
   sendJSON(res, 200, {
     status: 'healthy',
-    version: '0.1.6',
+    version: '0.1.8',
     uptime: Math.floor((Date.now() - startTime) / 1000),
     timestamp: new Date().toISOString(),
   });
@@ -218,7 +218,37 @@ async function handleStatus(ctx: RequestContext): Promise<void> {
     sendError(res, 503, 'Bot not initialized', 'NOT_INITIALIZED');
     return;
   }
-  sendJSON(res, 200, bot.getStatus());
+
+  const status = bot.getStatus();
+  const config = bot.getConfig();
+
+  // Check LLM configuration
+  const hasAnthropicKey = !!(process.env.ANTHROPIC_API_KEY || config.llm?.apiKey);
+  const hasOpenRouterKey = !!process.env.OPENROUTER_API_KEY;
+  const hasGoogleAIKey = !!(process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY);
+  const hasAnyKey = hasAnthropicKey || hasOpenRouterKey || hasGoogleAIKey;
+
+  // Determine active provider
+  let activeProvider = 'none';
+  if (hasOpenRouterKey) activeProvider = 'openrouter';
+  else if (hasGoogleAIKey) activeProvider = 'google-ai';
+  else if (hasAnthropicKey) activeProvider = 'anthropic';
+
+  sendJSON(res, 200, {
+    ...status,
+    llm: {
+      configured: hasAnyKey,
+      provider: activeProvider,
+      model: config.llm?.model || 'not set',
+      hasApiKey: hasAnyKey,
+    },
+    environment: {
+      nodeEnv: NODE_ENV,
+      hasAnthropicKey,
+      hasOpenRouterKey,
+      hasGoogleAIKey,
+    },
+  });
 }
 
 async function handleModels(ctx: RequestContext): Promise<void> {
@@ -466,9 +496,9 @@ async function initializeBot(): Promise<void> {
         auth: { enabled: false, type: 'bearer' },
       },
       llm: {
-        provider: 'anthropic',
+        provider: process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY ? 'google' : 'anthropic',
         apiKey: process.env.ANTHROPIC_API_KEY || '',
-        model: process.env.DEFAULT_MODEL || 'claude-3-haiku-20240307',
+        model: process.env.DEFAULT_MODEL || (process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY ? 'gemini-2.5-flash' : 'claude-3-haiku-20240307'),
         temperature: 0.7,
         maxTokens: 4096,
         streaming: true,

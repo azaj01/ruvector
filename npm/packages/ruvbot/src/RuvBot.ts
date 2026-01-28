@@ -28,6 +28,7 @@ import {
   type Message as LLMMessage,
   createAnthropicProvider,
   createOpenRouterProvider,
+  createGoogleAIProvider,
 } from './integration/providers/index.js';
 
 type BotState = BotStatus;
@@ -473,9 +474,10 @@ export class RuvBot extends EventEmitter<RuvBotEvents> {
     // Initialize LLM provider based on configuration
     const { provider, apiKey, model } = config.llm;
 
-    // Check for OpenRouter API key first for multi-model access
+    // Check for available API keys in priority order
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     const anthropicKey = process.env.ANTHROPIC_API_KEY || apiKey;
+    const googleAIKey = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY;
 
     if (openrouterKey) {
       // Use OpenRouter for Gemini 2.5 and other models
@@ -485,6 +487,13 @@ export class RuvBot extends EventEmitter<RuvBotEvents> {
         siteName: 'RuvBot',
       });
       this.logger.info({ provider: 'openrouter', model: model || 'google/gemini-2.5-pro-preview-05-06' }, 'LLM provider initialized');
+    } else if (googleAIKey) {
+      // Use Google AI directly (Gemini 2.5)
+      this.llmProvider = createGoogleAIProvider({
+        apiKey: googleAIKey,
+        model: model || 'gemini-2.5-flash',
+      });
+      this.logger.info({ provider: 'google-ai', model: model || 'gemini-2.5-flash' }, 'LLM provider initialized');
     } else if (provider === 'anthropic' && anthropicKey) {
       this.llmProvider = createAnthropicProvider({
         apiKey: anthropicKey,
@@ -498,6 +507,8 @@ export class RuvBot extends EventEmitter<RuvBotEvents> {
         model: model || 'claude-3-5-sonnet-20241022',
       });
       this.logger.info({ provider: 'anthropic', model }, 'LLM provider initialized');
+    } else {
+      this.logger.warn({}, 'No LLM API key found. Set GOOGLE_AI_API_KEY, ANTHROPIC_API_KEY, or OPENROUTER_API_KEY');
     }
 
     // TODO: Initialize memory manager, skill registry, etc.
@@ -545,10 +556,20 @@ export class RuvBot extends EventEmitter<RuvBotEvents> {
     agent: Agent,
     userMessage: string
   ): Promise<string> {
-    // If no LLM provider, return fallback
+    // If no LLM provider, return helpful error message
     if (!this.llmProvider) {
       this.logger.warn('No LLM provider configured');
-      return `[RuvBot] LLM not configured. Received: "${userMessage}"`;
+      return `**LLM Not Configured**
+
+To enable AI responses, please set one of these environment variables:
+
+- \`GOOGLE_AI_API_KEY\` - Get from [Google AI Studio](https://aistudio.google.com/app/apikey)
+- \`ANTHROPIC_API_KEY\` - Get from [Anthropic Console](https://console.anthropic.com/)
+- \`OPENROUTER_API_KEY\` - Get from [OpenRouter](https://openrouter.ai/)
+
+Then redeploy the service with the API key set.
+
+*Your message was: "${userMessage}"*`;
     }
 
     // Build message history for context
