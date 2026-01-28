@@ -23,6 +23,12 @@ import type {
   err,
 } from './core/types.js';
 import { RuvBotError, ConfigurationError, InitializationError } from './core/errors.js';
+import {
+  type LLMProvider,
+  type Message as LLMMessage,
+  createAnthropicProvider,
+  createOpenRouterProvider,
+} from './integration/providers/index.js';
 
 type BotState = BotStatus;
 
@@ -63,6 +69,7 @@ export class RuvBot extends EventEmitter<RuvBotEvents> {
   private sessions: Map<string, Session> = new Map();
   private isRunning: boolean = false;
   private startTime?: Date;
+  private llmProvider: LLMProvider | null = null;
 
   constructor(options: RuvBotOptions = {}) {
     super();
@@ -460,6 +467,39 @@ export class RuvBot extends EventEmitter<RuvBotEvents> {
 
   private async initializeServices(): Promise<void> {
     this.logger.debug('Initializing core services...');
+
+    const config = this.configManager.getConfig();
+
+    // Initialize LLM provider based on configuration
+    const { provider, apiKey, model } = config.llm;
+
+    // Check for OpenRouter API key first for multi-model access
+    const openrouterKey = process.env.OPENROUTER_API_KEY;
+    const anthropicKey = process.env.ANTHROPIC_API_KEY || apiKey;
+
+    if (openrouterKey) {
+      // Use OpenRouter for Gemini 2.5 and other models
+      this.llmProvider = createOpenRouterProvider({
+        apiKey: openrouterKey,
+        model: model || 'google/gemini-2.5-pro-preview-05-06',
+        siteName: 'RuvBot',
+      });
+      this.logger.info({ provider: 'openrouter', model: model || 'google/gemini-2.5-pro-preview-05-06' }, 'LLM provider initialized');
+    } else if (provider === 'anthropic' && anthropicKey) {
+      this.llmProvider = createAnthropicProvider({
+        apiKey: anthropicKey,
+        model: model || 'claude-3-5-sonnet-20241022',
+      });
+      this.logger.info({ provider: 'anthropic', model }, 'LLM provider initialized');
+    } else if (anthropicKey) {
+      // Fallback to Anthropic if only that key is available
+      this.llmProvider = createAnthropicProvider({
+        apiKey: anthropicKey,
+        model: model || 'claude-3-5-sonnet-20241022',
+      });
+      this.logger.info({ provider: 'anthropic', model }, 'LLM provider initialized');
+    }
+
     // TODO: Initialize memory manager, skill registry, etc.
   }
 
@@ -505,9 +545,59 @@ export class RuvBot extends EventEmitter<RuvBotEvents> {
     agent: Agent,
     userMessage: string
   ): Promise<string> {
-    // Placeholder response generation
-    // TODO: Integrate with LLM orchestrator
-    return `[RuvBot] Received: "${userMessage}"`;
+    // If no LLM provider, return fallback
+    if (!this.llmProvider) {
+      this.logger.warn('No LLM provider configured');
+      return `[RuvBot] LLM not configured. Received: "${userMessage}"`;
+    }
+
+    // Build message history for context
+    const messages: LLMMessage[] = [];
+
+    // Add system prompt from agent config
+    if (agent.config.systemPrompt) {
+      messages.push({
+        role: 'system',
+        content: agent.config.systemPrompt,
+      });
+    }
+
+    // Add recent message history (last 20 messages for context)
+    const recentMessages = session.messages.slice(-20);
+    for (const msg of recentMessages) {
+      messages.push({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+      });
+    }
+
+    // Add current user message
+    messages.push({
+      role: 'user',
+      content: userMessage,
+    });
+
+    try {
+      // Call LLM provider
+      const completion = await this.llmProvider.complete(messages, {
+        temperature: agent.config.temperature ?? 0.7,
+        maxTokens: agent.config.maxTokens ?? 4096,
+      });
+
+      this.logger.debug({
+        inputTokens: completion.usage.inputTokens,
+        outputTokens: completion.usage.outputTokens,
+        finishReason: completion.finishReason,
+      }, 'LLM response received');
+
+      return completion.content;
+    } catch (error) {
+      this.logger.error({ error }, 'LLM completion failed');
+      throw new RuvBotError(
+        `Failed to generate response: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'LLM_ERROR'
+      );
+    }
   }
 }
 
