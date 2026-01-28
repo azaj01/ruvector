@@ -71,14 +71,24 @@ async function parseBody(req: IncomingMessage): Promise<Record<string, unknown> 
         resolve(null);
         return;
       }
+      const rawBody = Buffer.concat(chunks).toString('utf-8');
       try {
-        const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+        const body = JSON.parse(rawBody);
         resolve(body);
-      } catch {
+      } catch (parseError) {
+        logger.error({
+          rawBody: rawBody.substring(0, 500),
+          contentType: req.headers['content-type'],
+          contentLength: req.headers['content-length'],
+          err: parseError
+        }, 'JSON parse error');
         reject(new Error('Invalid JSON'));
       }
     });
-    req.on('error', reject);
+    req.on('error', (err) => {
+      logger.error({ err }, 'Request body read error');
+      reject(err);
+    });
   });
 }
 
@@ -124,6 +134,33 @@ async function handleStatus(ctx: RequestContext): Promise<void> {
     return;
   }
   sendJSON(res, 200, bot.getStatus());
+}
+
+async function handleModels(ctx: RequestContext): Promise<void> {
+  const { res } = ctx;
+  sendJSON(res, 200, {
+    models: [
+      // Gemini 2.x (recommended)
+      { id: 'google/gemini-2.5-pro-preview-05-06', name: 'Gemini 2.5 Pro Preview', provider: 'openrouter' },
+      { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', provider: 'openrouter' },
+      { id: 'google/gemini-2.0-flash-thinking-exp:free', name: 'Gemini 2.0 Flash Thinking (Free)', provider: 'openrouter' },
+      // Anthropic Claude
+      { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'openrouter' },
+      { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus', provider: 'openrouter' },
+      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Direct)', provider: 'anthropic' },
+      // OpenAI
+      { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openrouter' },
+      { id: 'openai/o1-preview', name: 'O1 Preview (Reasoning)', provider: 'openrouter' },
+      // Qwen
+      { id: 'qwen/qwq-32b', name: 'Qwen QwQ 32B (Reasoning)', provider: 'openrouter' },
+      { id: 'qwen/qwq-32b:free', name: 'Qwen QwQ 32B (Free)', provider: 'openrouter' },
+      // DeepSeek
+      { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1 (Reasoning)', provider: 'openrouter' },
+      // Meta
+      { id: 'meta-llama/llama-3.1-405b-instruct', name: 'Llama 3.1 405B', provider: 'openrouter' },
+    ],
+    default: 'google/gemini-2.5-pro-preview-05-06',
+  });
 }
 
 async function handleCreateAgent(ctx: RequestContext): Promise<void> {
@@ -212,22 +249,60 @@ async function handleChat(ctx: RequestContext): Promise<void> {
 
   // Validate input with AIDefence if enabled
   let messageContent = body.message as string;
+  let inputBlocked = false;
   if (aiDefence) {
     const analysisResult = await aiDefence.analyze(messageContent);
-    if (!analysisResult.safe && analysisResult.sanitizedInput) {
-      logger.warn({ threats: analysisResult.threats }, 'Threats detected in message');
-      messageContent = analysisResult.sanitizedInput;
+    if (!analysisResult.safe) {
+      logger.warn({
+        threats: analysisResult.threats,
+        threatLevel: analysisResult.threatLevel,
+      }, 'Threats detected in message');
+
+      // Block critical threats entirely
+      if (analysisResult.threatLevel === 'critical') {
+        sendError(res, 400, 'Message blocked due to security concerns', 'SECURITY_BLOCKED');
+        inputBlocked = true;
+        return;
+      }
+
+      // Use sanitized input for lower-level threats
+      if (analysisResult.sanitizedInput) {
+        messageContent = analysisResult.sanitizedInput;
+      }
     }
   }
 
+  if (inputBlocked) return;
+
   try {
+    logger.debug({ sessionId, messageLength: messageContent.length }, 'Processing chat request');
+
     const response = await bot.chat(sessionId, messageContent, {
       userId: body.userId as string,
       metadata: body.metadata as Record<string, unknown>,
     });
+
+    logger.debug({ sessionId, responseId: response.id }, 'Chat response generated');
+
+    // Validate output with AIDefence if enabled
+    if (aiDefence && response.content) {
+      try {
+        const outputResult = await aiDefence.validateResponse(response.content, messageContent);
+        if (!outputResult.safe) {
+          logger.warn({
+            threats: outputResult.threats,
+          }, 'Threats detected in response');
+        }
+      } catch (defenceError) {
+        // Log but don't fail the request if AIDefence validation fails
+        logger.warn({ err: defenceError }, 'AIDefence output validation failed');
+      }
+    }
+
     sendJSON(res, 200, response);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error({ err: error, sessionId, errorMessage: message }, 'Chat request failed');
     sendError(res, 400, message, 'CHAT_ERROR');
   }
 }
@@ -240,6 +315,7 @@ const routes: Route[] = [
   { method: 'GET', pattern: /^\/health$/, handler: handleHealth },
   { method: 'GET', pattern: /^\/ready$/, handler: handleReady },
   { method: 'GET', pattern: /^\/api\/status$/, handler: handleStatus },
+  { method: 'GET', pattern: /^\/api\/models$/, handler: handleModels },
   { method: 'POST', pattern: /^\/api\/agents$/, handler: handleCreateAgent },
   { method: 'GET', pattern: /^\/api\/agents$/, handler: handleListAgents },
   { method: 'POST', pattern: /^\/api\/sessions$/, handler: handleCreateSession },
@@ -272,7 +348,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         await route.handler({ req, res, url, body });
         return;
       } catch (error) {
-        logger.error({ error, path: url.pathname }, 'Request handler error');
+        // Use 'err' key for proper pino error serialization
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error({ err: error, path: url.pathname, errorMessage }, 'Request handler error');
         sendError(res, 500, 'Internal server error', 'INTERNAL_ERROR');
         return;
       }
@@ -370,8 +448,11 @@ async function startServer(): Promise<void> {
   // Create HTTP server
   const server = createServer((req, res) => {
     handleRequest(req, res).catch((error) => {
-      logger.error({ error }, 'Unhandled request error');
-      sendError(res, 500, 'Internal server error', 'INTERNAL_ERROR');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, errorMessage }, 'Unhandled request error');
+      if (!res.headersSent) {
+        sendError(res, 500, 'Internal server error', 'INTERNAL_ERROR');
+      }
     });
   });
 
@@ -411,6 +492,7 @@ async function startServer(): Promise<void> {
 // ============================================================================
 
 startServer().catch((error) => {
-  logger.error({ error }, 'Failed to start server');
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  logger.error({ err: error, errorMessage }, 'Failed to start server');
   process.exit(1);
 });

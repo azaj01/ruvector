@@ -49,7 +49,11 @@ export type OpenRouterModel =
   | 'openai/gpt-4o'
   | 'openai/o1-preview'
   | 'openai/o1-mini'
-  // Google via OpenRouter
+  // Google Gemini 2.x via OpenRouter
+  | 'google/gemini-2.5-pro-preview-05-06'
+  | 'google/gemini-2.0-flash-001'
+  | 'google/gemini-2.0-flash-lite-001'
+  | 'google/gemini-2.0-flash-thinking-exp:free'
   | 'google/gemini-pro-1.5'
   | 'google/gemini-flash-1.5'
   // Meta via OpenRouter
@@ -215,7 +219,32 @@ const MODEL_INFO: Record<string, ModelInfo> = {
     maxTokens: 4096,
     contextWindow: 32000,
   },
-  // Google
+  // Google Gemini 2.x
+  'google/gemini-2.5-pro-preview-05-06': {
+    id: 'google/gemini-2.5-pro-preview-05-06',
+    name: 'Gemini 2.5 Pro Preview',
+    maxTokens: 65536,
+    contextWindow: 1000000,
+  },
+  'google/gemini-2.0-flash-001': {
+    id: 'google/gemini-2.0-flash-001',
+    name: 'Gemini 2.0 Flash',
+    maxTokens: 8192,
+    contextWindow: 1000000,
+  },
+  'google/gemini-2.0-flash-lite-001': {
+    id: 'google/gemini-2.0-flash-lite-001',
+    name: 'Gemini 2.0 Flash Lite',
+    maxTokens: 8192,
+    contextWindow: 1000000,
+  },
+  'google/gemini-2.0-flash-thinking-exp:free': {
+    id: 'google/gemini-2.0-flash-thinking-exp:free',
+    name: 'Gemini 2.0 Flash Thinking (Free)',
+    maxTokens: 32768,
+    contextWindow: 1000000,
+  },
+  // Google Gemini 1.5
   'google/gemini-pro-1.5': {
     id: 'google/gemini-pro-1.5',
     name: 'Gemini Pro 1.5',
