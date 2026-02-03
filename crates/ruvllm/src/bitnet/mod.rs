@@ -80,7 +80,10 @@ pub use rlm_embedder::{
     RlmEmbeddingResult,
 };
 pub use rlm_refiner::{RefinementResult, RefinementStepMetrics, RlmRefiner, RlmRefinerConfig};
-pub use backend::{BitNetBackend, BitNetModelConfig};
+pub use backend::{
+    BitNetBackend, BitNetModelConfig, ModelValidation, TensorDiscoveryReport, TensorEntry,
+    TensorGroup,
+};
 pub use expert_cache::{
     ExpertBatch, ExpertCache, ExpertCacheConfig, ExpertCacheStats, EvictionPolicy,
     MoeBatchScheduler, NullPrefetcher, Prefetcher,
