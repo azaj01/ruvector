@@ -69,17 +69,19 @@ fn quantize_activations_i16(x: &[f32]) -> (Vec<i16>, f32) {
     (x_q, scale)
 }
 
-/// Unpack 2 packed bytes (8 ternary values at 2 bits each) into an
-/// 8-byte array of indices suitable for i8x16_swizzle LUT lookup.
+/// Unpack 8 consecutive ternary values starting at a flat element index
+/// into an 8-byte array of 2-bit codes for i8x16_swizzle LUT lookup.
+///
+/// Handles arbitrary alignment (the flat index need not be a multiple of 4).
 #[inline]
-fn unpack_indices_8(packed: &[u8], offset: usize) -> [u8; 8] {
+fn unpack_indices_8(packed: &[u8], flat_start: usize) -> [u8; 8] {
     let mut indices = [0u8; 8];
-    for bi in 0..2 {
-        let byte = packed.get(offset + bi).copied().unwrap_or(0);
-        indices[bi * 4] = byte & 0x03;
-        indices[bi * 4 + 1] = (byte >> 2) & 0x03;
-        indices[bi * 4 + 2] = (byte >> 4) & 0x03;
-        indices[bi * 4 + 3] = (byte >> 6) & 0x03;
+    for k in 0..8 {
+        let flat = flat_start + k;
+        let byte_idx = flat / 4;
+        let bit_off = (flat % 4) * 2;
+        let byte = packed.get(byte_idx).copied().unwrap_or(0);
+        indices[k] = (byte >> bit_off) & 0x03;
     }
     indices
 }
@@ -143,7 +145,7 @@ pub fn tl1_gemv_wasm(
     let sign_lut = build_sign_lut();
 
     for row in 0..m {
-        let row_byte_start = (row * n) / 4;
+        let row_flat_start = row * n;
         let mut total_sum = 0.0f32;
 
         let effective_bs = if block_size > 0 { block_size } else { n };
@@ -156,7 +158,7 @@ pub fn tl1_gemv_wasm(
         for blk in 0..blocks_per_row {
             let col_start = blk * effective_bs;
             let col_end = (col_start + effective_bs).min(n);
-            let flat_block_idx = (row * n + col_start) / effective_bs;
+            let flat_block_idx = (row_flat_start + col_start) / effective_bs;
             let scale = scales.get(flat_block_idx).copied().unwrap_or(1.0);
 
             // 8 x INT16 accumulator
@@ -166,8 +168,8 @@ pub fn tl1_gemv_wasm(
 
             let mut col = col_start;
             while col < simd_end {
-                let pack_off = row_byte_start + col / 4;
-                let indices = unpack_indices_8(packed, pack_off);
+                let flat_col = row_flat_start + col;
+                let indices = unpack_indices_8(packed, flat_col);
 
                 // Pad indices to 16 bytes for i8x16_swizzle (upper 8 are unused/zero)
                 let mut indices_16 = [0u8; 16];
@@ -324,8 +326,9 @@ mod tests {
 
         // On non-wasm32 targets, dispatch falls back to scalar, so results match exactly.
         // On wasm32 targets, INT16 quantization introduces small rounding differences.
+        let x_max = x.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
         for (i, (a, b)) in y_dispatch.iter().zip(y_scalar.iter()).enumerate() {
-            let tol = b.abs() * 0.02 + 1e-4;
+            let tol = b.abs() * 0.05 + x_max * 0.01 + 1e-3;
             assert!(
                 (a - b).abs() < tol,
                 "row {} dispatch mismatch: {} vs {} (tol={})",
@@ -447,6 +450,7 @@ mod tests {
         // Byte 0: [-1, 0, +1, 0] encoded as [00, 01, 10, 01] = 0b01_10_01_00 = 0x64
         // Byte 1: [+1, -1, -1, +1] encoded as [10, 00, 00, 10] = 0b10_00_00_10 = 0x82
         let packed = vec![0x64u8, 0x82u8];
+        // flat_start=0 means starting at element 0 -> byte 0 bit 0
         let indices = unpack_indices_8(&packed, 0);
         assert_eq!(indices, [0, 1, 2, 1, 2, 0, 0, 2]);
     }

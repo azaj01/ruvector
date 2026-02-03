@@ -82,17 +82,19 @@ unsafe fn hsum_epi32_avx2(v: __m256i) -> i32 {
     _mm_cvtsi128_si32(sum32)
 }
 
-/// Unpack 4 packed bytes (16 ternary values at 2 bits each) into a
-/// 16-byte array of indices suitable for vpshufb LUT lookup.
+/// Unpack 16 consecutive ternary values starting at a flat element index
+/// into a 16-byte array of 2-bit codes for vpshufb LUT lookup.
+///
+/// Handles arbitrary alignment (the flat index need not be a multiple of 4).
 #[inline]
-fn unpack_indices_16(packed: &[u8], offset: usize) -> [u8; 16] {
+fn unpack_indices_16(packed: &[u8], flat_start: usize) -> [u8; 16] {
     let mut indices = [0u8; 16];
-    for bi in 0..4 {
-        let byte = packed.get(offset + bi).copied().unwrap_or(0);
-        indices[bi * 4] = byte & 0x03;
-        indices[bi * 4 + 1] = (byte >> 2) & 0x03;
-        indices[bi * 4 + 2] = (byte >> 4) & 0x03;
-        indices[bi * 4 + 3] = (byte >> 6) & 0x03;
+    for k in 0..16 {
+        let flat = flat_start + k;
+        let byte_idx = flat / 4;
+        let bit_off = (flat % 4) * 2;
+        let byte = packed.get(byte_idx).copied().unwrap_or(0);
+        indices[k] = (byte >> bit_off) & 0x03;
     }
     indices
 }
@@ -130,7 +132,7 @@ pub unsafe fn tl1_gemv_avx2(
     let sign_lut = _mm_set_epi8(0, 1, 0, -1, 0, 1, 0, -1, 0, 1, 0, -1, 0, 1, 0, -1);
 
     for row in 0..m {
-        let row_byte_start = (row * n) / 4;
+        let row_flat_start = row * n;
         let mut total_sum = 0.0f32;
 
         let blocks_per_row = if block_size > 0 {
@@ -143,7 +145,7 @@ pub unsafe fn tl1_gemv_avx2(
         for blk in 0..blocks_per_row {
             let col_start = blk * effective_bs;
             let col_end = (col_start + effective_bs).min(n);
-            let flat_block_idx = (row * n + col_start) / effective_bs;
+            let flat_block_idx = (row_flat_start + col_start) / effective_bs;
             let scale = scales.get(flat_block_idx).copied().unwrap_or(1.0);
 
             let mut acc = _mm256_setzero_si256();
@@ -152,8 +154,8 @@ pub unsafe fn tl1_gemv_avx2(
 
             let mut col = col_start;
             while col < simd_end {
-                let pack_off = row_byte_start + col / 4;
-                let indices = unpack_indices_16(packed, pack_off);
+                let flat_col = row_flat_start + col;
+                let indices = unpack_indices_16(packed, flat_col);
 
                 // LUT lookup: map 2-bit codes to signed bytes {-1, 0, +1}
                 let idx_vec = _mm_loadu_si128(indices.as_ptr() as *const __m128i);
@@ -296,8 +298,11 @@ mod tests {
         let mut y_dispatch = vec![0.0f32; m];
         tl1_gemv(&packed, &scales, &x, &mut y_dispatch, m, n, bs);
 
+        // AVX2 path uses INT16 quantized activations, so there is inherent
+        // rounding error. Use a tolerance proportional to the activation range.
+        let x_max = x.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
         for (i, (a, b)) in y_dispatch.iter().zip(y_scalar.iter()).enumerate() {
-            let tol = b.abs() * 0.02 + 1e-4;
+            let tol = b.abs() * 0.05 + x_max * 0.01 + 1e-3;
             assert!(
                 (a - b).abs() < tol,
                 "row {} dispatch mismatch: {} vs {} (tol={})",
