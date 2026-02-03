@@ -1,6 +1,6 @@
 # Domain-Driven Design: Craftsman Ultra 30b 1bit
 
-**Version:** 2.1
+**Version:** 2.2
 **Date:** 2026-02-03
 **Relates to:** ADR-017-craftsman-ultra-30b-1bit-bitnet-integration
 **Status:** Research / Pre-Implementation
@@ -80,6 +80,10 @@ The following terms have precise meaning within the Craftsman Ultra domain. All 
 | **IQ1_S** | llama.cpp's 1.56 bpw importance quantization format. Codebook-based, dequant-then-multiply — NOT multiplication-free like BitNet. |
 | **BITNET_T158** | Proposed GGUF tensor type for native BitNet b1.58 ternary weights (2-bit packed + FP16 per-block absmean scale). Distinct from IQ1_S. |
 | **Phase 0 Prototype** | PT-BitNet quantized model used for inference pipeline validation and kernel testing, not production quality. |
+| **RLM Refinement** | Training only the FP16 components (LoRA, router, scales) of a PTQ model using the existing RLM stack, with ternary weights frozen. |
+| **Frozen Ternary** | Expert FFN weights locked to their PTQ {-1,0,+1} values during Phase 0.5 refinement — not differentiable, not modified. |
+| **LoRA Correction** | Small FP16 additive output from MicroLoRA that compensates for ternary quantization error: `Y = BitLinear(X) + LoRA(X)`. |
+| **Router Repair** | Contrastive fine-tuning of FP16 router weights to correct misrouting caused by expert output distribution changes after PTQ. |
 
 ---
 
@@ -526,7 +530,39 @@ The following terms have precise meaning within the Craftsman Ultra domain. All 
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Reuse ratio**: ~70% existing / ~30% new
+**Reuse ratio**: ~70% existing / ~30% new (Phase 1+ distillation)
+
+### 3.8.1 Phase 0.5: RLM Post-Quantization Refinement Mode
+
+The RLM Training Orchestration Context operates in a **lightweight refinement mode** during Phase 0.5, where ternary weights are frozen and only FP16 components are trained. This requires zero new training code — all components are wired directly from existing production code.
+
+**Phase 0.5 operational differences from Phase 1+:**
+
+| Aspect | Phase 1+ (Distillation) | Phase 0.5 (RLM Refinement) |
+|--------|------------------------|---------------------------|
+| Ternary weights | Trained (shadow + STE) | **Frozen** |
+| Trainable params | ~28B | ~200-400M (1-2%) |
+| Training tokens | 200B | 100-500M (400x less) |
+| `BitLinearTrainer` | Yes (NEW code) | **Not needed** |
+| `MicroLoRA` | Post-training LoRA | **Training-time LoRA corrections** |
+| `ContrastiveTrainer` | Router validation | **Router repair** |
+| `GrpoOptimizer` | Per-expert distillation reward | **Scale factor optimization reward** |
+| `EwcRegularizer` | Cross-expert stability | **Cross-step stability** |
+| Platform | Cloud GPU (4× A100) | **Mac Studio (Metal)** |
+| Cost | $1,300+ | **$0** |
+| New code | ~30% new | **~0% new** (only thin orchestrator) |
+
+**Key entities in Phase 0.5 mode:**
+- `RlmRefiner` — Thin orchestrator (~200-300 lines) that wires existing RLM components for post-quantization refinement (NEW)
+- `MicroLoRA` — Rank 1-2 FP16 adapters per expert FFN (REUSED from `lora/micro_lora.rs`)
+- `TrainingPipeline` — Single-example + batch gradient training with EWC++ (REUSED from `lora/training.rs`)
+- `ContrastiveTrainer` — Triplet + InfoNCE for router repair (REUSED from `training/contrastive.rs`)
+- `GrpoOptimizer` — Quality reward signal for scale optimization (REUSED from `training/grpo.rs`)
+- `EwcRegularizer` — Prevents regression during multi-step refinement (REUSED from `lora/training.rs`)
+- `MemoryDistiller` — Tracks which experts benefit most from LoRA corrections (REUSED)
+- `PolicyStore` — Persists optimized scale factors and LoRA configs (REUSED)
+
+**Reuse ratio (Phase 0.5)**: **100% existing / 0% new training code** (only a thin orchestrator wrapper)
 
 ---
 
@@ -1050,6 +1086,9 @@ All changes are additive. No existing backend, model, or API is modified. The `B
 | 12 | Phase 0 PTQ calibration corpus choice? | Phase 0 quality | Open | WikiText-2 vs code-specific corpus (e.g., The Stack) — code corpus may preserve coding ability better |
 | 13 | IQ1_S vs BITNET_T158 GGUF type for Phase 0? | GGUF compatibility | Open | IQ1_S (type 19) exists but block format may differ from absmean; custom BITNET_T158 avoids confusion but breaks llama.cpp compat |
 | 14 | Phase 0 → Phase 1 weight migration path? | Efficiency | Open | Can Phase 0 PTQ weights serve as initialization for Phase 1 distillation shadow weights? |
+| 15 | Optimal MicroLoRA rank for Phase 0.5? | Quality vs speed | Open | Rank-1 is faster, rank-2 is 5% faster due to SIMD but has 2× params. Empirical testing needed. |
+| 16 | LoRA adapter persistence in GGUF? | Export format | Open | Store LoRA A/B matrices as separate tensors in GGUF, or merge into ternary+FP16 hybrid format? |
+| 17 | Phase 0.5 LoRA → Phase 1 distillation init? | Continuity | Open | Can Phase 0.5 LoRA corrections inform Phase 1 shadow weight initialization for faster convergence? |
 
 ---
 

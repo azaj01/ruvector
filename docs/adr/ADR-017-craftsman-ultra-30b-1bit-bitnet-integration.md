@@ -364,7 +364,7 @@ Keep GLM-4.7-Flash structure but replace only the expert MLP layers with BitLine
 
 ## Decision
 
-**Phased approach: A(0C) → D → C → B**
+**Phased approach: A(0C) → RLM Refinement → D → C → B**
 
 ### Phase 0: PTQ Rapid Prototype (Option A, Sub-option 0C)
 - **Timeline**: 1-2 weeks
@@ -382,13 +382,37 @@ Keep GLM-4.7-Flash structure but replace only the expert MLP layers with BitLine
 - **Why Mac Studio works**: Phase 0 is PTQ (no training loop) — just load FP16 weights via mmap, compute absmean per block, round to ternary, export. The absmean computation is trivial math; the bottleneck is memory bandwidth, not compute. Calibration forward pass uses Metal GPU acceleration via existing Candle integration.
 - **Optional upgrade (0D)**: If 0C quality is too low for meaningful testing, apply BitDistill Lite (10B tokens, ~$300 cloud or ~$0 on Mac Studio over several weeks) to reach ~90-95% quality
 
+### Phase 0.5: RLM Post-Quantization Refinement (NEW — Mac Studio, $0)
+- **Timeline**: 1-3 weeks (overlaps with Phase 0 kernel development)
+- **Cost**: **$0** (runs on Mac Studio, ~2-12 days training wall time)
+- **Platform**: Mac Studio (same as Phase 0)
+- **Goal**: Improve Phase 0 PTQ quality from ~55-65% to ~70-80% by training only the small FP16 components using the existing RLM stack — **no traditional distillation, no cloud GPU**
+- **Approach**: Freeze ternary weights, train FP16 corrections using RLM components:
+  1. **MicroLoRA adapters** (rank 1-2) on each expert FFN — adds small FP16 correction: `Y = BitLinear(X) + LoRA_B @ LoRA_A @ X`
+  2. **Router fine-tuning** via ContrastiveTrainer — corrects misrouting caused by PTQ weight changes
+  3. **Scale factor optimization** via GRPO rewards — per-block FP16 absmean scales are differentiable
+  4. **EWC++ regularization** — prevents router fix from breaking already-good routing paths
+  5. **Quality tracking** via MemoryDistiller — identifies worst-degraded experts for focused training
+  6. **Policy persistence** via PolicyStore — stores optimized per-layer configurations
+- **Trainable parameters**: ~200-400M (1-2% of 30B total) — router (~30M), MicroLoRA adapters (~50-100M), LM head (~150M), scale factors (~0.1M)
+- **Training data**: 100M-500M tokens (sufficient for <400M trainable params)
+- **Throughput**: ~500-1000 tok/s (Metal) × 100M-500M tokens = **2-12 days on Mac Studio**
+- **Deliverables**:
+  - RLM-refined GGUF with ternary experts + optimized FP16 components
+  - MicroLoRA adapter weights (exportable, ~20-100 MB)
+  - Optimized router weights and scale factors
+  - Quality benchmarks showing improvement over Phase 0 baseline
+- **Expected quality**: **~70-80% of GLM-4.7-Flash** (up from ~55-65% Phase 0 PTQ)
+- **Key value**: Gets a usable model on Mac Studio at $0 before committing to cloud GPU. If 70-80% quality is sufficient for the use case, Phase 1 cloud distillation may be deferred or skipped entirely.
+- **100% RLM code reuse**: MicroLoRA, TrainingPipeline, EwcRegularizer, GrpoOptimizer, ContrastiveTrainer, MemoryDistiller, PolicyStore — all production-tested, zero new training code needed
+
 ### Phase 1: BitNet Expert Replacement (Option D)
 - **Timeline**: 3-4 months
 - **Cost**: ~$1,300-$2,000 (4× A100 spot, ~46 days)
-- **Goal**: Full-quality ternary experts via distillation, validated against Phase 0 baseline
+- **Goal**: Full-quality ternary experts via distillation, validated against Phase 0/0.5 baselines
 - **Deliverables**: Working Craftsman Ultra 30b 1bit (mixed: ternary experts, FP16 attention)
 - **Expected quality**: ~90-95% of GLM-4.7-Flash on coding benchmarks
-- **Prerequisites**: Phase 0 validates inference pipeline works end-to-end
+- **Prerequisites**: Phase 0 validates inference pipeline; Phase 0.5 provides quality baseline
 
 ### Phase 2: Full BitNet Distillation (Option C)
 - **Timeline**: 4-6 months after Phase 1
@@ -848,6 +872,7 @@ let expert_results: Vec<DistillResult> = experts
 |-------|----------|----------|----------------|----------|
 | **Phase 0 (PTQ)** | **Mac Studio (M4 Max/M3 Ultra)** | **1-4 hours** | **$0** | **Mmap FP16 weights → absmean quantize → export GGUF; Metal GPU for calibration pass** |
 | Phase 0D (BitDistill Lite, 10B tok) | Mac Studio Metal or 1× A100 spot | 2-4 weeks (local) / 1-2 days (cloud) | $0 (local) / ~$300 (cloud) | Optional quality upgrade if Phase 0C too degraded |
+| **Phase 0.5 (RLM refinement, 100-500M tok)** | **Mac Studio (Metal)** | **3-14 days** | **$0** | **MicroLoRA + router fix + scale opt using existing RLM stack** |
 | Phase 1 (expert FFN, 200B tok) | 4× A100 80GB spot (GCP) | ~46 days | $1,300-$2,000 | Per-expert sequential with EWC++; each expert fits 1 GPU |
 | Phase 1 (router validation) | Mac Studio Metal or 1× A100 | ~2-4 hours | $0 (local) / <$10 (cloud) | Contrastive training on router only (~2B params) |
 | Phase 2 (full ternary, 500B tok) | 4× H100 (DataCrunch) | ~16-32 days | $2,500-$5,000 | All layers; model-parallel across GPUs |
@@ -1002,6 +1027,134 @@ pub struct PtBitnetConfig {
 **Reused**: GGUF parser, tensor metadata, `GgufQuantType` enum, export pipeline.
 **New**: `PtBitnetQuantizer`, `absmean_ternary()`, `BITNET_T158` dequantization kernel.
 
+### AD-19: Phase 0.5 — RLM Post-Quantization Refinement (No Traditional Training)
+
+**Decision**: Use the existing RLM training stack to refine the Phase 0 PTQ model on Mac Studio by training only the small FP16 components (~1-2% of parameters), freezing ternary weights. This replaces traditional distillation for the rapid prototype phase.
+
+**Rationale**: Traditional knowledge distillation (Phase 1) requires shadow weights, straight-through estimator, and GPU-scale compute to modify the ternary weights themselves. However, the Phase 0 PTQ model already has ternary weights — the quality loss comes from:
+1. Sub-optimal per-block scale factors (absmean is a rough approximation)
+2. MoE router misrouting tokens to wrong experts (expert output distributions changed)
+3. No adaptation to ternary output characteristics
+
+All three can be addressed by training only the FP16 components using the existing RLM stack, without touching the ternary weights.
+
+**What gets trained (FP16, differentiable) vs frozen (ternary, not differentiable):**
+
+| Component | Params | Size | Trainable? | Training Method |
+|-----------|--------|------|------------|----------------|
+| Expert FFN ternary weights | ~28B | ~5.5 GB | **Frozen** | N/A — {-1,0,+1} not differentiable |
+| MicroLoRA adapters (rank-2, per expert FFN) | ~50-100M | ~100-200 MB | **Yes** | `TrainingPipeline` + `EwcRegularizer` |
+| MoE router gating weights | ~30M | ~60 MB | **Yes** | `ContrastiveTrainer` (triplet + InfoNCE) |
+| Per-block absmean scale factors | ~0.1M | ~200 KB | **Yes** | GRPO reward-guided optimization |
+| LM head (output projection) | ~150M | ~300 MB | **Yes (optional)** | Standard fine-tuning |
+| Attention Q/K/V/O (FP16) | ~2B | ~4 GB | **Optional** | Can add LoRA here too if budget allows |
+| **Total trainable** | **~200-400M** | **~400-800 MB** | | **~1-2% of 30B total** |
+
+**Why RLM works here (vs traditional distillation):**
+
+| Property | Traditional KD (Phase 1) | RLM Refinement (Phase 0.5) |
+|----------|--------------------------|----------------------------|
+| Modifies ternary weights | Yes (shadow weights + STE) | No (frozen) |
+| Trainable params | ~28B (all expert weights) | ~200-400M (1-2%) |
+| Training tokens needed | 200B | 100M-500M (400x less) |
+| GPU requirement | 4× A100 ($1,300+) | Mac Studio Metal ($0) |
+| Training time | ~46 days (cloud) | **2-12 days (local)** |
+| Quality target | ~90-95% of FP16 | ~70-80% of FP16 |
+| New code required | ~15,000 lines (BitLinear, STE, orchestrator) | **~0 lines** (100% RLM reuse) |
+
+**RLM component mapping:**
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│              Phase 0.5: RLM Refinement Pipeline                  │
+│              (100% existing RLM code, 0% new training code)      │
+│                                                                  │
+│  Frozen Ternary Model (Phase 0 PTQ output)                       │
+│  ┌────────────────────────────────────────────┐                  │
+│  │  Expert FFNs: {-1,0,+1} weights (FROZEN)   │                  │
+│  │  Router: FP16 gating (TRAINABLE)            │                  │
+│  │  Attention: FP16 (TRAINABLE via LoRA opt.)  │                  │
+│  │  Scales: FP16 per-block (TRAINABLE)         │                  │
+│  └────────────────────────────────────────────┘                  │
+│           │                                                       │
+│     ┌─────▼──────────────────────────────────────────┐           │
+│     │  Step 1: Router Repair                          │           │
+│     │  ContrastiveTrainer (REUSED, contrastive.rs)    │           │
+│     │  • Generate triplets: anchor=hidden, +correct   │           │
+│     │    expert, -wrong expert                        │           │
+│     │  • Triplet + InfoNCE loss on FP16 router        │           │
+│     │  • Fix misrouting from PTQ weight changes       │           │
+│     │  Training: ~10M tokens, ~1-2 hours (Metal)      │           │
+│     └─────┬──────────────────────────────────────────┘           │
+│           │                                                       │
+│     ┌─────▼──────────────────────────────────────────┐           │
+│     │  Step 2: MicroLoRA Injection + Training         │           │
+│     │  TrainingPipeline + MicroLoRA (REUSED,          │           │
+│     │    lora/training.rs + lora/micro_lora.rs)       │           │
+│     │  • Rank-2 LoRA per expert FFN: Y = BitLinear(X) │           │
+│     │    + LoRA_B @ LoRA_A @ X                        │           │
+│     │  • Loss: MSE(teacher_output, student+LoRA)      │           │
+│     │  • EWC++ across expert phases                   │           │
+│     │  Training: ~100-500M tokens, ~2-12 days (Metal) │           │
+│     └─────┬──────────────────────────────────────────┘           │
+│           │                                                       │
+│     ┌─────▼──────────────────────────────────────────┐           │
+│     │  Step 3: Scale Factor + Quality Optimization    │           │
+│     │  GrpoOptimizer (REUSED, grpo.rs)                │           │
+│     │  • Per-expert output quality → reward signal     │           │
+│     │  • Optimize FP16 scale factors to maximize       │           │
+│     │    cosine similarity with teacher output          │           │
+│     │  • Adaptive KL prevents over-correction          │           │
+│     │  Training: concurrent with Step 2               │           │
+│     └─────┬──────────────────────────────────────────┘           │
+│           │                                                       │
+│     ┌─────▼──────────────────────────────────────────┐           │
+│     │  Feedback Loop                                  │           │
+│     │  MemoryDistiller → KeyLessons (REUSED)          │           │
+│     │  PolicyStore → TernaryScale policies (REUSED)   │           │
+│     │  • Track which experts improve most             │           │
+│     │  • Store optimized configs for reproducibility  │           │
+│     └────────────────────────────────────────────────┘           │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Memory budget on Mac Studio during Phase 0.5 training:**
+
+| Component | Size | Notes |
+|-----------|------|-------|
+| PTQ ternary model (mmap) | ~7 GB disk / ~3-7 GB RAM | Demand-paged; only active expert pages in RAM |
+| Teacher FP16 model (mmap) | ~60 GB disk / ~4-8 GB RAM | Only forward pass activations; demand-paged |
+| MicroLoRA adapters (rank-2) | ~200 MB | All experts in RAM |
+| LoRA gradients + optimizer (AdamW 2×FP32) | ~1.5 GB | For ~400M trainable params |
+| EWC++ Fisher diagonal | ~200 MB | Per-expert accumulated |
+| KV cache + activations | ~2 GB | Calibration/training forward pass |
+| **Total active RAM** | **~12-20 GB** | **Fits in any Mac Studio config** |
+
+**Key insight**: The teacher model is only needed for forward pass (no gradients), so it can be mmap'd and demand-paged. The ternary student is similarly mmap'd. Only the ~400M trainable parameters and their optimizer state need to be fully in RAM (~2 GB), which fits comfortably in even the 36GB M4 Max.
+
+**Training schedule on Mac Studio M4 Max 128GB:**
+
+| Step | Tokens | Wall Time | What Changes |
+|------|--------|-----------|-------------|
+| Router repair | ~10M | ~3-6 hours | FP16 router gating weights |
+| LoRA training (per-expert, sequential) | ~100-500M | 2-12 days | MicroLoRA A/B matrices per expert FFN |
+| Scale optimization | ~10M | ~3-6 hours | Per-block FP16 absmean scales |
+| Validation + export | — | ~1-2 hours | Benchmark + GGUF re-export |
+| **Total** | **~120-520M** | **~3-14 days** | |
+
+**Expected quality improvement:**
+
+| Benchmark | Phase 0 PTQ | Phase 0.5 RLM | Phase 1 Distill | FP16 Baseline |
+|-----------|------------|--------------|----------------|---------------|
+| HumanEval pass@1 | ~35-45% | **~45-55%** | ~55-60% | ~65% |
+| MMLU | ~45-55% | **~55-65%** | ~65-70% | ~75% |
+| SWE-bench Verified | ~25-35% | **~35-45%** | ~50-55% | 59.2% |
+
+**The question "can I use RLM rather than traditional training" is answered YES** — with the critical caveat that RLM refinement trains the FP16 corrections around frozen ternary weights, not the ternary weights themselves. This is fundamentally different from traditional distillation but achieves meaningful quality recovery (estimated +10-15 percentage points) at zero cost.
+
+**Reused (100%)**: `MicroLoRA`, `TrainingPipeline`, `EwcRegularizer`, `GrpoOptimizer`, `ContrastiveTrainer`, `MemoryDistiller`, `PolicyStore`, `TrainingConfig`, LR schedules, GGUF export.
+**New (0%)**: No new training code. The only new code is a thin `RlmRefiner` orchestrator (~200-300 lines) that wires the existing components together for the Phase 0.5 pipeline.
+
 ---
 
 ## Consequences
@@ -1014,7 +1167,7 @@ pub struct PtBitnetConfig {
 4. **Multiplication-free expert GEMM**: Integer addition only in expert forward passes
 5. **SONA compatibility**: MicroLoRA adaptation preserves per-session learning
 6. **GGUF ecosystem**: Compatible with existing model distribution infrastructure
-7. **Incremental path**: Phase 0 validates at ~$100; Phase 1 delivers quality; Phases 2-3 optimize
+7. **Incremental path**: Phase 0 ($0) validates pipeline; Phase 0.5 ($0) adds RLM quality boost; Phase 1 ($1,300) delivers production quality; Phases 2-3 optimize
 8. **~70% RLM code reuse**: GRPO, EWC++, ContrastiveTrainer, MemoryDistiller, PolicyStore are production-tested — only BitLinear layer and orchestrator are net-new
 9. **Adaptive distillation**: GRPO reward scaling dynamically focuses compute on hard-to-distill experts
 10. **Cross-expert stability**: EWC++ Fisher diagonal prevents catastrophic forgetting during sequential expert distillation
@@ -1022,6 +1175,8 @@ pub struct PtBitnetConfig {
 12. **Expert-parallel distillation**: Independent expert FFNs enable rayon-parallel distillation across CPU cores
 13. **Phase 0 de-risks Phase 1 at zero cost**: Mac Studio PTQ prototype validates entire inference pipeline (GGUF → dequant → kernel → MoE → generation) for $0 before committing $1,300+ to cloud GPU distillation
 14. **Existing GGUF ecosystem**: Community-published GLM-4.7-Flash GGUFs (bartowski, unsloth) available as comparison baselines
+15. **Phase 0.5 RLM refinement at $0**: Existing MicroLoRA + GRPO + EWC++ + ContrastiveTrainer stack provides ~10-15 percentage point quality recovery over raw PTQ with zero new training code, running entirely on Mac Studio
+16. **100% RLM reuse for Phase 0.5**: No new training infrastructure needed — all 7 RLM components are production-tested and wire together directly
 
 ### Negative
 
@@ -1063,6 +1218,19 @@ pub struct PtBitnetConfig {
 - [ ] Throughput measured: tok/s on Mac Studio (ARM NEON) and optionally x86 AVX2
 - [ ] Baseline quality benchmarks recorded (HumanEval, MMLU) as Phase 1 improvement target
 - [ ] Total Phase 0 cost = $0 (local Mac Studio execution)
+
+### Phase 0.5 Exit Criteria
+- [ ] MicroLoRA adapters (rank-2) attached to all expert FFN layers
+- [ ] Router fine-tuning via ContrastiveTrainer restores >=90% routing accuracy vs teacher
+- [ ] GRPO reward signal shows positive quality improvement over Phase 0 baseline
+- [ ] EWC++ prevents router fix from degrading already-correct routing paths (Fisher delta < 5%)
+- [ ] HumanEval pass@1 >= 45% (up from Phase 0 baseline of ~35-45%)
+- [ ] MicroLoRA + ternary inference produces coherent code completions
+- [ ] Training completes on Mac Studio within 14 days
+- [ ] MemoryDistiller has extracted KeyLessons identifying worst-degraded experts
+- [ ] PolicyStore contains optimized TernaryScale entries for all refined layers
+- [ ] Total Phase 0.5 cost = $0 (local Mac Studio execution)
+- [ ] GGUF re-exported with optimized router, scale factors, and LoRA adapter weights
 
 ### Phase 1 Exit Criteria
 - [ ] BitNet backend loads GGUF with ternary expert weights
