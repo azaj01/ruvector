@@ -1137,7 +1137,7 @@ await dag.execute();
 </details>
 
 <details>
-<summary>🦀 Rust Crates (63 Packages)</summary>
+<summary>🦀 Rust Crates (70 Packages)</summary>
 
 All crates are published to [crates.io](https://crates.io) under the `ruvector-*` namespace.
 
@@ -1405,6 +1405,24 @@ See [ruvector-dag README](./crates/ruvector-dag/README.md) for full documentatio
 **Performance Targets:** >100K writes/sec, <1ms p99 read latency, 4-32x compression ([ADR-023](./docs/adr/temporal-tensor-store/ADR-023-benchmarking-acceptance-criteria.md))
 
 See [Domain-Driven Design](./docs/architecture/temporal-tensor-store-ddd.md) for architecture details.
+
+### Delta Behavior (Behavioral Change Tracking)
+
+| Crate | Description | crates.io |
+|-------|-------------|-----------|
+| [ruvector-delta-core](./crates/ruvector-delta-core) | Core delta types and traits for behavioral vector change tracking | [![crates.io](https://img.shields.io/crates/v/ruvector-delta-core.svg)](https://crates.io/crates/ruvector-delta-core) |
+| [ruvector-delta-graph](./crates/ruvector-delta-graph) | Delta operations for graph structures — edge and node changes | [![crates.io](https://img.shields.io/crates/v/ruvector-delta-graph.svg)](https://crates.io/crates/ruvector-delta-graph) |
+| [ruvector-delta-index](./crates/ruvector-delta-index) | Delta-aware HNSW index with incremental updates and repair | [![crates.io](https://img.shields.io/crates/v/ruvector-delta-index.svg)](https://crates.io/crates/ruvector-delta-index) |
+| [ruvector-delta-consensus](./crates/ruvector-delta-consensus) | Distributed delta consensus using CRDTs and causal ordering | [![crates.io](https://img.shields.io/crates/v/ruvector-delta-consensus.svg)](https://crates.io/crates/ruvector-delta-consensus) |
+| [ruvector-delta-wasm](./crates/ruvector-delta-wasm) | WASM bindings for delta operations on vectors | [![crates.io](https://img.shields.io/crates/v/ruvector-delta-wasm.svg)](https://crates.io/crates/ruvector-delta-wasm) |
+
+**Delta Behavior** tracks how vectors change over time — the mathematics of systems that refuse to collapse. Incremental HNSW updates without full rebuilds, CRDT-based distributed consensus, and causal ordering for conflict-free replication.
+
+### Profiling & Diagnostics
+
+| Crate | Description | crates.io |
+|-------|-------------|-----------|
+| [profiling](./crates/profiling) | Real-time coherence assessment via dynamic min-cut | [![crates.io](https://img.shields.io/crates/v/profiling.svg)](https://crates.io/crates/profiling) |
 
 ### CRV Signal Line Protocol
 
@@ -4213,7 +4231,7 @@ curl -X POST http://localhost:8080/search \
 <details>
 <summary>📚 Production Examples</summary>
 
-28 production-ready examples demonstrating RuVector integration patterns.
+34 production-ready examples demonstrating RuVector integration patterns.
 
 | Example | Description | Type |
 |---------|-------------|------|
@@ -4242,6 +4260,12 @@ curl -X POST http://localhost:8080/search \
 | [wasm](./examples/wasm) | Core WASM examples and bindings | WASM |
 | [nodejs](./examples/nodejs) | Node.js integration examples | Node.js |
 | [rust](./examples/rust) | Core Rust usage examples | Rust |
+| [dna](./examples/dna) | rvDNA: AI-native genomic analysis, variant calling, `.rvdna` format | Rust |
+| [delta-behavior](./examples/delta-behavior) | Mathematics of systems that refuse to collapse — behavioral change tracking | Rust |
+| [data](./examples/data) | Dataset discovery framework — graph-based pattern finding in massive datasets | Rust |
+| [prime-radiant](./examples/prime-radiant) | Prime-Radiant coherence engine examples and usage demos | Rust |
+| [benchmarks](./examples/benchmarks) | Comprehensive benchmarks for temporal reasoning and vector operations | Rust |
+| [vwm-viewer](./examples/vwm-viewer) | Visual vector world model viewer (HTML Canvas) | HTML |
 
 </details>
 
