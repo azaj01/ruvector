@@ -1714,13 +1714,64 @@ cargo test --workspace
 # Total: 46/46 integration tests passed
 ```
 
-### Generate All 45 Example Files
+### Live Boot Proof: Docker + SSH + RVF Verification
+
+Build a single `.rvf` file with vectors, kernel, eBPF, witness chain, and Ed25519 crypto, then boot it in Docker and verify via SSH:
+
+```bash
+# Requires Docker daemon running (no QEMU needed)
+cd examples/rvf && cargo run --example live_boot_proof
+
+# Output:
+#   --- Phase 1: Build .rvf Cognitive Container ---
+#   [VEC_SEG]     100 vectors ingested (128-dim, cosine)
+#   [INITRAMFS]   1115 bytes (real gzipped cpio archive)
+#   [KERNEL_SEG]  Embedded with api_port:2222
+#   [EBPF_SEG]    288 bytes (XDP distance, precompiled ELF)
+#   [WITNESS_SEG] 4 entries, chain verified
+#   [CRYPTO_SEG]  Ed25519 signed, signature verified
+#
+#   --- Phase 2: Verify .rvf Integrity ---
+#   Vectors: 100, Segments: 304, Query: consistent
+#   Kernel: 128 bytes header, 4151 bytes image
+#
+#   --- Phase 3: Docker Live Boot ---
+#   Container: rvf-live-proof (running)
+#   ssh-listen: port 22222 OPEN
+#   rvf-copied: /data.rvf (476 KB)
+#   rvf-magic: VALID (RVFS)
+#   rvf-sha256: matches host
+#   Docker boot: PROVEN
+```
+
+One file. Stores vectors. Boots compute. Proves everything.
+
+### Ultra-Fast Boot: Sub-100ms Kernel Configuration
+
+```rust
+use rvf_kernel::KernelBuilder;
+use rvf_types::kernel::KernelArch;
+
+let builder = KernelBuilder::new(KernelArch::X86_64)
+    .ultrafast()                              // sub-100ms config
+    .with_initramfs(&["rvf-server"]);
+
+let initramfs = builder.build_fast_initramfs( // minimal init path
+    &["rvf-server"],
+    &[],
+).unwrap();
+// Strips: NUMA, cgroups, namespaces, ext4, netfilter, IPv6, debug
+// Uses:   LZ4 decompression, NR_CPUS=4, performance-optimized codegen
+// Result: kernel-to-service in <100ms
+```
+
+### Generate All 46 Example Files
 
 ```bash
 cd examples/rvf && cargo run --example generate_all
-ls output/  # 45 .rvf files (~11 MB total)
+ls output/  # 46 .rvf files (~11 MB total)
 rvf inspect output/sealed_engine.rvf
-rvf inspect output/linux_microkernel.rvf
+rvf inspect output/live_boot_proof.rvf
 ```
 
 ## 🤝 Contributing
