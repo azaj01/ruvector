@@ -183,6 +183,8 @@ pub struct TemporalSolver {
     pub stop_after_first: bool,
     /// Skip to matching weekday (advance by 7 days instead of 1)
     pub skip_weekday: Option<Weekday>,
+    /// Constraint propagation pre-pass mode (controlled by PolicyKernel)
+    pub prepass_mode: PrepassMode,
 }
 
 impl Default for TemporalSolver {
@@ -195,6 +197,7 @@ impl Default for TemporalSolver {
             tool_calls: 0,
             stop_after_first: false,
             skip_weekday: None,
+            prepass_mode: PrepassMode::Off,
         }
     }
 }
@@ -207,11 +210,145 @@ impl TemporalSolver {
             web_search_tool: web_search,
             stop_after_first: false,
             skip_weekday: None,
+            prepass_mode: PrepassMode::Off,
             ..Default::default()
         }
     }
 
-    /// Solve a puzzle with step tracking
+    /// Constraint propagation pre-pass: tighten the search range
+    /// using InMonth, DayOfMonth, and DayOfWeek constraints.
+    ///
+    /// This is the key sublinear optimization. Instead of scanning
+    /// every day in the range, we compute valid date sets directly:
+    ///
+    /// 1. InMonth(m) + InYear(y) → range shrinks to that month (≤31 days)
+    /// 2. DayOfMonth(d) + bounded range → jump directly to matching days
+    /// 3. DayOfWeek(w) already handled by skip_weekday, but propagation
+    ///    can further restrict: e.g., Month(2) + DayOfWeek(Mon) in a year
+    ///    has only 4-5 candidates.
+    ///
+    /// Returns (tightened_start, tightened_end, direct_candidates).
+    /// If direct_candidates is non-empty, skip the scan entirely.
+    fn propagate_constraints(
+        &self,
+        puzzle: &TemporalPuzzle,
+        range_start: NaiveDate,
+        range_end: NaiveDate,
+    ) -> (NaiveDate, NaiveDate, Vec<NaiveDate>) {
+        let mut start = range_start;
+        let mut end = range_end;
+
+        // Extract constraint features
+        let mut target_month: Option<u32> = None;
+        let mut target_dom: Option<u32> = None;
+        let mut target_dow: Option<Weekday> = None;
+        let mut target_year: Option<i32> = None;
+
+        for c in &puzzle.constraints {
+            match c {
+                TemporalConstraint::InMonth(m) => { target_month = Some(*m); }
+                TemporalConstraint::DayOfMonth(d) => { target_dom = Some(*d); }
+                TemporalConstraint::DayOfWeek(w) => { target_dow = Some(*w); }
+                TemporalConstraint::InYear(y) => { target_year = Some(*y); }
+                _ => {}
+            }
+        }
+
+        // Tighten by month + year
+        if let (Some(m), Some(y)) = (target_month, target_year) {
+            let month_start = NaiveDate::from_ymd_opt(y, m, 1);
+            let month_end = if m == 12 {
+                NaiveDate::from_ymd_opt(y, 12, 31)
+            } else {
+                NaiveDate::from_ymd_opt(y, m + 1, 1)
+                    .and_then(|d| d.pred_opt())
+            };
+            if let (Some(ms), Some(me)) = (month_start, month_end) {
+                if ms > start { start = ms; }
+                if me < end { end = me; }
+            }
+        } else if let Some(m) = target_month {
+            // Month without year: tighten to first occurrence in range
+            let year = start.year();
+            if let Some(ms) = NaiveDate::from_ymd_opt(year, m, 1) {
+                if ms >= start && ms <= end {
+                    start = ms;
+                    // End of that month
+                    let me = if m == 12 {
+                        NaiveDate::from_ymd_opt(year, 12, 31)
+                    } else {
+                        NaiveDate::from_ymd_opt(year, m + 1, 1)
+                            .and_then(|d| d.pred_opt())
+                    };
+                    if let Some(me) = me {
+                        if me < end { end = me; }
+                    }
+                }
+            }
+        }
+
+        // Direct solve: DayOfMonth within a tight range
+        if let Some(dom) = target_dom {
+            if (end - start).num_days() <= 366 {
+                let mut candidates = Vec::new();
+                let mut y = start.year();
+                let mut m = start.month();
+                loop {
+                    if let Some(d) = NaiveDate::from_ymd_opt(y, m, dom) {
+                        if d >= start && d <= end {
+                            // Verify against ALL constraints before adding
+                            if puzzle.check_date(d).unwrap_or(false) {
+                                candidates.push(d);
+                            }
+                        }
+                        if d > end { break; }
+                    }
+                    // Next month
+                    m += 1;
+                    if m > 12 { m = 1; y += 1; }
+                    if NaiveDate::from_ymd_opt(y, m, 1)
+                        .map(|d| d > end)
+                        .unwrap_or(true) { break; }
+                }
+                if !candidates.is_empty() {
+                    return (start, end, candidates);
+                }
+            }
+        }
+
+        // Direct solve: DayOfWeek within a tight range (≤60 days → ≤9 candidates)
+        // Only in Full mode — Light mode does InMonth/DayOfMonth only
+        if self.prepass_mode == PrepassMode::Full {
+            if let Some(dow) = target_dow {
+                let range_days = (end - start).num_days();
+                if range_days <= 60 && range_days >= 0 {
+                    let mut candidates = Vec::new();
+                    let mut d = start;
+                    while d.weekday() != dow && d <= end {
+                        d = d.succ_opt().unwrap_or(d);
+                    }
+                    while d <= end {
+                        if puzzle.check_date(d).unwrap_or(false) {
+                            candidates.push(d);
+                        }
+                        d = d + chrono::Duration::days(7);
+                    }
+                    if !candidates.is_empty() {
+                        return (start, end, candidates);
+                    }
+                }
+            }
+        }
+
+        (start, end, Vec::new())
+    }
+
+    /// Solve a puzzle with step tracking.
+    ///
+    /// Three-phase solve:
+    /// 1. Constraint propagation: tighten range, attempt direct solve
+    /// 2. If direct candidates found: verify and return (sublinear)
+    /// 3. Otherwise: scan with optional weekday skip (linear/7x)
     pub fn solve(&mut self, puzzle: &TemporalPuzzle) -> Result<SolverResult> {
         self.steps = 0;
         self.tool_calls = 0;
@@ -229,18 +366,50 @@ impl TemporalSolver {
         // Determine search range from effective (rewritten) constraints
         let range = self.determine_search_range(&effective_puzzle)?;
 
-        // Search for solutions
+        // ─── Phase 1: Constraint propagation (if enabled) ────────────────
+        let (prop_start, prop_end, direct_candidates) = match self.prepass_mode {
+            PrepassMode::Off => (range.0, range.1, Vec::new()),
+            PrepassMode::Light | PrepassMode::Full => {
+                self.propagate_constraints(&effective_puzzle, range.0, range.1)
+            }
+        };
+
+        // ─── Phase 2: Direct solve (sublinear) ──────────────────────────
+        if !direct_candidates.is_empty() {
+            self.steps = direct_candidates.len();
+            self.tool_calls += 1; // propagation counts as a tool call
+            let latency = start_time.elapsed();
+
+            let correct = if puzzle.solutions.is_empty() {
+                true
+            } else {
+                puzzle.solutions.iter().all(|s|
+                    direct_candidates.contains(s) || *s < prop_start || *s > prop_end)
+            };
+
+            return Ok(SolverResult {
+                puzzle_id: puzzle.id.clone(),
+                solved: !direct_candidates.is_empty(),
+                correct,
+                solutions: direct_candidates,
+                steps: self.steps,
+                tool_calls: self.tool_calls,
+                latency_ms: latency.as_millis() as u64,
+            });
+        }
+
+        // ─── Phase 3: Scan (linear or weekday-skip) ─────────────────────
         let mut found_solutions = Vec::new();
-        let mut current = range.0;
+        let mut current = prop_start; // Use propagated (tighter) range
 
         // Advance to first matching weekday if skipping enabled
         if let Some(target_dow) = self.skip_weekday {
-            while current.weekday() != target_dow && current <= range.1 {
+            while current.weekday() != target_dow && current <= prop_end {
                 current = current.succ_opt().unwrap_or(current);
             }
         }
 
-        while current <= range.1 && self.steps < self.max_steps {
+        while current <= prop_end && self.steps < self.max_steps {
             self.steps += 1;
             if effective_puzzle.check_date(current)? {
                 found_solutions.push(current);
@@ -261,15 +430,13 @@ impl TemporalSolver {
         let latency = start_time.elapsed();
 
         // Check correctness
-        // Correctness: every expected solution was found (or outside search range).
-        // Extra found solutions (other valid dates in posterior) don't affect correctness.
         let correct = if puzzle.solutions.is_empty() {
-            true // No ground truth
+            true
         } else {
             puzzle
                 .solutions
                 .iter()
-                .all(|s| found_solutions.contains(s) || *s < range.0 || *s > range.1)
+                .all(|s| found_solutions.contains(s) || *s < prop_start || *s > prop_end)
         };
 
         Ok(SolverResult {
@@ -571,6 +738,17 @@ pub struct SkipOutcome {
 }
 
 /// Per-context skip-mode statistics for learned policy.
+///
+/// Two-signal model for Thompson Sampling:
+/// 1. **Safety posterior**: Beta(alpha_safety, beta_safety)
+///    Updated by whether the commit was correct (not just solved).
+///    Drives exploration toward safe arms.
+/// 2. **Cost signal**: EMA of normalized step cost.
+///    Captures efficiency without contaminating the safety posterior.
+///
+/// Final score = sample_safety - lambda * cost_ema
+/// This separates "is it safe?" (explored by Thompson Sampling)
+/// from "is it cheap?" (deterministic penalty).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SkipModeStats {
     pub attempts: usize,
@@ -579,24 +757,114 @@ pub struct SkipModeStats {
     pub early_commit_wrongs: usize,
     /// Accumulated normalized early-commit penalty (remaining/initial fractions)
     pub early_commit_penalty_sum: f64,
+    /// Safety posterior alpha: correct commits
+    pub alpha_safety: f64,
+    /// Safety posterior beta: incorrect commits + early wrongs
+    pub beta_safety: f64,
+    /// Cost EMA: exponential moving average of normalized step cost
+    pub cost_ema: f64,
 }
 
+/// Lambda: weight of cost penalty in Thompson score.
+/// Higher = more cost-sensitive, lower = more safety-focused.
+const THOMPSON_LAMBDA: f64 = 0.3;
+/// EMA decay factor for cost signal. 0.9 = slow decay, recent history matters.
+const COST_EMA_ALPHA: f64 = 0.1;
+
 impl SkipModeStats {
-    /// Reward: balances accuracy (50%), cost (30%), and robustness (20%).
-    ///
-    /// Robustness = inverse of early-commit penalty rate.
-    /// This is the signal that drives Mode C to prefer Hybrid/None
-    /// in distractor-heavy contexts where Weekday commits early and wrong.
+    /// Composite reward for backward compatibility and diagnostics.
     pub fn reward(&self) -> f64 {
         if self.attempts == 0 { return 0.5; }
         let accuracy = self.successes as f64 / self.attempts as f64;
         let cost_bonus = 0.3 * (1.0 - (self.total_steps as f64 / self.attempts as f64) / 200.0).max(0.0);
-        // Robustness penalty: normalized penalty per attempt, scaled to 0..0.2
-        // Higher penalty_sum → worse robustness → lower reward
         let avg_penalty = self.early_commit_penalty_sum / self.attempts as f64;
         let robustness_penalty = 0.2 * avg_penalty.min(1.0);
         (accuracy * 0.5 + cost_bonus - robustness_penalty).max(0.0)
     }
+
+    /// Safety Beta posterior parameters.
+    ///
+    /// Prior: Beta(1, 1) = uniform.
+    /// alpha = safe commits (correct, no early-commit penalty)
+    /// beta  = unsafe commits (wrong, or early-commit-wrong)
+    pub fn safety_beta(&self) -> (f64, f64) {
+        (self.alpha_safety + 1.0, self.beta_safety + 1.0)
+    }
+
+    /// Posterior variance of the safety Beta distribution.
+    /// High variance = high uncertainty = speculative dual-path trigger.
+    pub fn safety_variance(&self) -> f64 {
+        let (a, b) = self.safety_beta();
+        (a * b) / ((a + b).powi(2) * (a + b + 1.0))
+    }
+
+    /// Update safety posterior from an outcome.
+    pub fn update_safety(&mut self, correct: bool, early_commit_wrong: bool) {
+        if correct && !early_commit_wrong {
+            self.alpha_safety += 1.0;
+        } else {
+            self.beta_safety += 1.0;
+            if early_commit_wrong {
+                // Double penalty for early wrong commits: these are the dangerous ones
+                self.beta_safety += 0.5;
+            }
+        }
+    }
+
+    /// Update cost EMA from an outcome.
+    pub fn update_cost(&mut self, normalized_steps: f64) {
+        if self.attempts <= 1 {
+            self.cost_ema = normalized_steps;
+        } else {
+            self.cost_ema = COST_EMA_ALPHA * normalized_steps
+                + (1.0 - COST_EMA_ALPHA) * self.cost_ema;
+        }
+    }
+}
+
+/// Constraint propagation pre-pass mode.
+///
+/// Controls whether the solver runs arc-consistency before scanning.
+/// Selectable by PolicyKernel — kept off by default to preserve
+/// learning gradient. If prepass always wins, increase generator
+/// ambiguity to restore gradient.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PrepassMode {
+    /// No constraint propagation (default)
+    Off,
+    /// Cheap local pruning: InMonth+DayOfMonth only
+    Light,
+    /// Full arc consistency: InMonth+DayOfMonth+DayOfWeek
+    Full,
+}
+
+impl Default for PrepassMode {
+    fn default() -> Self { PrepassMode::Off }
+}
+
+impl std::fmt::Display for PrepassMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PrepassMode::Off => write!(f, "off"),
+            PrepassMode::Light => write!(f, "light"),
+            PrepassMode::Full => write!(f, "full"),
+        }
+    }
+}
+
+/// Metrics from constraint propagation pre-pass.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PrepassMetrics {
+    /// Total pre-pass invocations
+    pub invocations: usize,
+    /// Total candidates pruned by pre-pass
+    pub pruned_candidates: usize,
+    /// Total steps the pre-pass itself took
+    pub prepass_steps: usize,
+    /// Estimated scan steps saved by pre-pass
+    pub scan_steps_saved: usize,
+    /// Number of direct solves (scan skipped entirely)
+    pub direct_solves: usize,
 }
 
 /// PolicyKernel: decides skip_mode based on context.
@@ -615,10 +883,18 @@ pub struct PolicyKernel {
     pub early_commits_total: usize,
     /// Total early commits that were wrong
     pub early_commits_wrong: usize,
-    /// Exploration rate for learned policy
+    /// Exploration rate (legacy, not used by Thompson Sampling)
     pub epsilon: f64,
-    /// RNG state
+    /// RNG state (seeded for deterministic Thompson Sampling)
     rng_state: u64,
+    /// Constraint propagation pre-pass mode
+    pub prepass: PrepassMode,
+    /// Pre-pass metrics
+    pub prepass_metrics: PrepassMetrics,
+    /// Speculative dual-path attempts
+    pub speculative_attempts: usize,
+    /// Speculative dual-path wins (second arm was better)
+    pub speculative_arm2_wins: usize,
 }
 
 impl PolicyKernel {
@@ -671,46 +947,161 @@ impl PolicyKernel {
     }
 
     /// Learned policy (Mode C):
-    /// Uses contextual stats to pick the best skip mode.
-    /// Epsilon-greedy exploration for discovering better policies.
+    /// Two-signal Thompson Sampling.
+    ///
+    /// Signal 1 (safety): sample from Beta(alpha_safety, beta_safety)
+    ///   - Naturally explores uncertain arms
+    ///   - Converges as evidence accumulates
+    ///   - O(√T) regret bound
+    ///
+    /// Signal 2 (cost): deterministic EMA penalty
+    ///   - No exploration needed (fully observed)
+    ///   - Penalizes expensive arms
+    ///
+    /// Score = safety_sample - lambda * cost_ema
+    ///
+    /// When the top two arms are within delta AND uncertainty is high,
+    /// returns both arms for speculative dual-path execution.
     pub fn learned_policy(&mut self, ctx: &PolicyContext) -> SkipMode {
         if !ctx.has_day_of_week {
             return SkipMode::None;
         }
 
         let bucket = Self::context_bucket(ctx);
-
-        // Epsilon-greedy exploration
-        let r = self.next_f64();
-        if r < self.epsilon {
-            // Explore: random mode
-            return match (self.next_f64() * 3.0) as u8 {
-                0 => SkipMode::None,
-                1 => SkipMode::Weekday,
-                _ => SkipMode::Hybrid,
-            };
-        }
-
-        // Exploit: pick mode with highest reward
-        let stats_map = self.context_stats.entry(bucket).or_default();
         let modes = ["none", "weekday", "hybrid"];
-        let mut best_mode = SkipMode::None;
-        let mut best_reward = -1.0f64;
 
-        for mode_name in &modes {
-            let stats = stats_map.get(*mode_name).cloned().unwrap_or_default();
-            let reward = stats.reward();
-            if reward > best_reward {
-                best_reward = reward;
-                best_mode = match *mode_name {
+        // Collect sampling params before borrowing self for sampling
+        let params: Vec<(SkipMode, f64, f64, f64)> = {
+            let stats_map = self.context_stats.entry(bucket).or_default();
+            modes.iter().map(|mode_name| {
+                let stats = stats_map.get(*mode_name).cloned().unwrap_or_default();
+                let (alpha, beta) = stats.safety_beta();
+                let mode = match *mode_name {
                     "weekday" => SkipMode::Weekday,
                     "hybrid" => SkipMode::Hybrid,
                     _ => SkipMode::None,
                 };
+                (mode, alpha, beta, stats.cost_ema)
+            }).collect()
+        };
+
+        // Sample and score (now safe to borrow self mutably for RNG)
+        let mut scored: Vec<(SkipMode, f64)> = params.into_iter().map(|(mode, alpha, beta, cost_ema)| {
+            let safety_sample = self.sample_beta(alpha, beta);
+            let score = safety_sample - THOMPSON_LAMBDA * cost_ema;
+            (mode, score)
+        }).collect();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.first().map(|(m, _)| m.clone()).unwrap_or(SkipMode::None)
+    }
+
+    /// Check if speculation is warranted for Mode C.
+    ///
+    /// Returns Some((arm1, arm2)) if:
+    /// 1. Top two arms are within `delta` of each other, AND
+    /// 2. Safety variance of the top arm is above threshold
+    ///
+    /// Otherwise returns None (single-path is sufficient).
+    pub fn should_speculate(&mut self, ctx: &PolicyContext) -> Option<(SkipMode, SkipMode)> {
+        if !ctx.has_day_of_week {
+            return None;
+        }
+
+        // Only speculate in medium/large range with distractors or noise
+        if ctx.posterior_range < 61 || (ctx.distractor_count == 0 && !ctx.noisy) {
+            return None;
+        }
+
+        let bucket = Self::context_bucket(ctx);
+        let modes = ["none", "weekday", "hybrid"];
+
+        // Collect params first to avoid double mutable borrow
+        let params: Vec<(SkipMode, f64, f64, f64, f64)> = {
+            let stats_map = self.context_stats.entry(bucket).or_default();
+            modes.iter().map(|mode_name| {
+                let stats = stats_map.get(*mode_name).cloned().unwrap_or_default();
+                let (alpha, beta) = stats.safety_beta();
+                let variance = stats.safety_variance();
+                let mode = match *mode_name {
+                    "weekday" => SkipMode::Weekday,
+                    "hybrid" => SkipMode::Hybrid,
+                    _ => SkipMode::None,
+                };
+                (mode, alpha, beta, stats.cost_ema, variance)
+            }).collect()
+        };
+
+        // Now sample with self.sample_beta() — no conflicting borrow
+        let mut scored: Vec<(SkipMode, f64, f64)> = params.into_iter().map(|(mode, alpha, beta, cost_ema, variance)| {
+            let safety_sample = self.sample_beta(alpha, beta);
+            let score = safety_sample - THOMPSON_LAMBDA * cost_ema;
+            (mode, score, variance)
+        }).collect();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        if scored.len() >= 2 {
+            let (ref arm1, score1, var1) = scored[0];
+            let (ref arm2, score2, _) = scored[1];
+            let delta = 0.15;
+            let var_threshold = 0.02; // Beta(1,1) has var≈0.083, so 0.02 = moderate certainty
+
+            if (score1 - score2).abs() < delta && var1 > var_threshold {
+                return Some((arm1.clone(), arm2.clone()));
             }
         }
 
-        best_mode
+        None
+    }
+
+    /// Sample from Beta(alpha, beta) using rejection sampling.
+    ///
+    /// Uses Joehnk's algorithm for alpha,beta < 1 and
+    /// Cheng's BA algorithm for larger params.
+    /// Deterministic given internal rng_state.
+    fn sample_beta(&mut self, alpha: f64, beta: f64) -> f64 {
+        // For our use case, alpha and beta are typically 1..50
+        // Use the gamma ratio method: Beta(a,b) = X/(X+Y) where X~Gamma(a), Y~Gamma(b)
+        let x = self.sample_gamma(alpha);
+        let y = self.sample_gamma(beta);
+        if x + y == 0.0 { return 0.5; }
+        x / (x + y)
+    }
+
+    /// Sample from Gamma(shape, 1) using Marsaglia & Tsang's method.
+    fn sample_gamma(&mut self, shape: f64) -> f64 {
+        if shape < 1.0 {
+            // Boost: Gamma(shape) = Gamma(shape+1) * U^(1/shape)
+            let u = self.next_f64().max(1e-10);
+            return self.sample_gamma(shape + 1.0) * u.powf(1.0 / shape);
+        }
+
+        let d = shape - 1.0 / 3.0;
+        let c = 1.0 / (9.0 * d).sqrt();
+
+        loop {
+            let x = self.next_standard_normal();
+            let v = (1.0 + c * x).powi(3);
+            if v <= 0.0 { continue; }
+
+            let u = self.next_f64().max(1e-10);
+
+            // Squeeze test
+            if u < 1.0 - 0.0331 * x * x * x * x {
+                return d * v;
+            }
+            if u.ln() < 0.5 * x * x + d * (1.0 - v + v.ln()) {
+                return d * v;
+            }
+        }
+    }
+
+    /// Box-Muller standard normal sample.
+    fn next_standard_normal(&mut self) -> f64 {
+        let u1 = self.next_f64().max(1e-10);
+        let u2 = self.next_f64();
+        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
     }
 
     /// Record the outcome of a skip-mode decision.
@@ -732,6 +1123,14 @@ impl PolicyKernel {
         stats.attempts += 1;
         stats.total_steps += outcome.steps;
         if outcome.correct { stats.successes += 1; }
+
+        // Update two-signal model
+        // Signal 1: safety posterior
+        stats.update_safety(outcome.correct, outcome.early_commit_wrong);
+        // Signal 2: cost EMA (normalize steps to 0..1 range)
+        let normalized_cost = (outcome.steps as f64 / 200.0).min(1.0);
+        stats.update_cost(normalized_cost);
+
         if outcome.early_commit_wrong {
             stats.early_commit_wrongs += 1;
             self.early_commits_wrong += 1;
@@ -740,11 +1139,8 @@ impl PolicyKernel {
                 (outcome.remaining_at_commit as f64 / outcome.initial_candidates as f64)
                     * Self::PENALTY_SCALE
             } else {
-                // Fallback: use step-based estimate
                 1.0 - (outcome.steps as f64 / 200.0).min(1.0)
             };
-            // Wire penalty into BOTH global accumulator AND per-arm stats
-            // so the bandit reward function can see it and learn from it
             self.early_commit_penalties += penalty;
             stats.early_commit_penalty_sum += penalty;
         }
@@ -792,21 +1188,30 @@ impl PolicyKernel {
     /// Print diagnostic summary.
     pub fn print_diagnostics(&self) {
         println!();
-        println!("  PolicyKernel Diagnostics");
+        println!("  PolicyKernel Diagnostics (Thompson Sampling, two-signal)");
         println!("  Early commits: {}/{} wrong ({:.1}%)",
             self.early_commits_wrong, self.early_commits_total,
             self.early_commit_rate() * 100.0);
         println!("  Accumulated penalty: {:.2}", self.early_commit_penalties);
+        println!("  Prepass mode: {}", self.prepass);
+        if self.prepass_metrics.invocations > 0 {
+            println!("  Prepass: {} invocations, {} direct solves, {} candidates pruned, {} scan steps saved",
+                self.prepass_metrics.invocations, self.prepass_metrics.direct_solves,
+                self.prepass_metrics.pruned_candidates, self.prepass_metrics.scan_steps_saved);
+        }
+        if self.speculative_attempts > 0 {
+            println!("  Speculation: {} attempts, {} arm2 wins ({:.0}%)",
+                self.speculative_attempts, self.speculative_arm2_wins,
+                self.speculative_arm2_wins as f64 / self.speculative_attempts as f64 * 100.0);
+        }
         println!("  Context buckets: {}", self.context_stats.len());
 
         for (bucket, modes) in &self.context_stats {
             println!("    {}", bucket);
             for (mode, stats) in modes {
-                println!("      {:<8} attempts={:<4} success={:<4} avg_steps={:.1} ecw={} reward={:.3}",
-                    mode, stats.attempts, stats.successes,
-                    if stats.attempts > 0 { stats.total_steps as f64 / stats.attempts as f64 } else { 0.0 },
-                    stats.early_commit_wrongs,
-                    stats.reward());
+                let (a, b) = stats.safety_beta();
+                println!("      {:<8} n={:<4} safe=Beta({:.1},{:.1}) cost_ema={:.3} reward={:.3}",
+                    mode, stats.attempts, a, b, stats.cost_ema, stats.reward());
             }
         }
     }
@@ -1480,6 +1885,8 @@ impl AdaptiveSolver {
         self.solver.max_steps = self.external_step_limit
             .unwrap_or(self.current_strategy.max_steps);
         self.solver.stop_after_first = false;
+        // Wire prepass mode from PolicyKernel
+        self.solver.prepass_mode = self.policy_kernel.prepass.clone();
 
         // Create trajectory for this puzzle
         let mut trajectory = Trajectory::new(&puzzle.id, puzzle.difficulty);
@@ -1489,6 +1896,22 @@ impl AdaptiveSolver {
         let start = std::time::Instant::now();
         let mut result = self.solver.solve(puzzle)?;
         trajectory.latency_ms = start.elapsed().as_millis() as u64;
+
+        // Track prepass metrics if enabled
+        if self.policy_kernel.prepass != PrepassMode::Off {
+            self.policy_kernel.prepass_metrics.invocations += 1;
+            // Direct solve: steps < 15 and correct means propagation worked
+            if result.steps <= 15 && result.correct && result.solved {
+                self.policy_kernel.prepass_metrics.direct_solves += 1;
+                // Estimate scan steps saved
+                let would_have_scanned = policy_ctx.posterior_range;
+                self.policy_kernel.prepass_metrics.scan_steps_saved += would_have_scanned;
+            }
+            // Estimate pruned candidates
+            let actual_range = (result.steps as f64 * 7.0) as usize; // rough
+            let saved = policy_ctx.posterior_range.saturating_sub(actual_range);
+            self.policy_kernel.prepass_metrics.pruned_candidates += saved;
+        }
 
         // ─── Hybrid refinement pass ──────────────────────────────────────
         // If Hybrid mode was used and we found solutions via weekday skip,
