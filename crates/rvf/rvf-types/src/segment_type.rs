@@ -39,6 +39,15 @@ pub enum SegmentType {
     Kernel = 0x0E,
     /// Embedded eBPF program for kernel fast path.
     Ebpf = 0x0F,
+    /// Embedded WASM bytecode for self-bootstrapping execution.
+    ///
+    /// A WASM_SEG contains either a WASM microkernel (the RVF query engine
+    /// compiled to wasm32) or a minimal WASM interpreter that can execute
+    /// the microkernel. When both are present the file becomes fully
+    /// self-bootstrapping: any host with raw execution capability can run
+    /// the embedded interpreter, which in turn runs the microkernel, which
+    /// processes the RVF data segments.
+    Wasm = 0x10,
     /// COW cluster mapping.
     CowMap = 0x20,
     /// Cluster reference counts.
@@ -70,6 +79,7 @@ impl TryFrom<u8> for SegmentType {
             0x0D => Ok(Self::MetaIdx),
             0x0E => Ok(Self::Kernel),
             0x0F => Ok(Self::Ebpf),
+            0x10 => Ok(Self::Wasm),
             0x20 => Ok(Self::CowMap),
             0x21 => Ok(Self::Refcount),
             0x22 => Ok(Self::Membership),
@@ -102,6 +112,7 @@ mod tests {
             SegmentType::MetaIdx,
             SegmentType::Kernel,
             SegmentType::Ebpf,
+            SegmentType::Wasm,
             SegmentType::CowMap,
             SegmentType::Refcount,
             SegmentType::Membership,
@@ -121,8 +132,9 @@ mod tests {
     }
 
     #[test]
-    fn kernel_and_ebpf_discriminants() {
+    fn kernel_ebpf_wasm_discriminants() {
         assert_eq!(SegmentType::Kernel as u8, 0x0E);
         assert_eq!(SegmentType::Ebpf as u8, 0x0F);
+        assert_eq!(SegmentType::Wasm as u8, 0x10);
     }
 }

@@ -32,6 +32,7 @@ pub mod segment_type;
 pub mod signature;
 pub mod attestation;
 pub mod lineage;
+pub mod wasm_bootstrap;
 
 pub use attestation::{AttestationHeader, AttestationWitnessType, TeePlatform, KEY_TYPE_TEE_BOUND};
 pub use ebpf::{
@@ -70,3 +71,9 @@ pub use quant_type::QuantType;
 pub use segment::SegmentHeader;
 pub use segment_type::SegmentType;
 pub use signature::{SignatureAlgo, SignatureFooter};
+pub use wasm_bootstrap::{
+    WasmHeader, WasmRole, WasmTarget, WASM_MAGIC,
+    WASM_FEAT_SIMD, WASM_FEAT_BULK_MEMORY, WASM_FEAT_MULTI_VALUE,
+    WASM_FEAT_REFERENCE_TYPES, WASM_FEAT_THREADS, WASM_FEAT_TAIL_CALL,
+    WASM_FEAT_GC, WASM_FEAT_EXCEPTION_HANDLING,
+};
