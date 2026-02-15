@@ -9,6 +9,7 @@
 extern crate alloc;
 
 mod alloc_setup;
+pub mod bootstrap;
 mod distance;
 mod memory;
 mod segment;
