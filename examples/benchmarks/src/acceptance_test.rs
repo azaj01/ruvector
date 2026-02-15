@@ -506,6 +506,11 @@ pub fn run_acceptance_test_mode(config: &HoldoutConfig, mode: &AblationMode) -> 
         0.0
     };
 
+    // Print compiler diagnostics in verbose mode
+    if config.verbose && compiler_enabled {
+        compiler.print_diagnostics();
+    }
+
     Ok(AblationResult {
         mode: mode.clone(),
         result: acceptance_result,

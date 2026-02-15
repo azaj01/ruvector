@@ -501,18 +501,50 @@ pub struct CompiledSolveConfig {
     pub use_rewriting: bool,
     /// Minimum steps that succeeded for this signature
     pub max_steps: usize,
+    /// Average steps across all successes (for bounded trial budget)
+    pub avg_steps: f64,
+    /// Number of successful observations compiled
+    pub observations: usize,
     /// Expected correctness
     pub expected_correct: bool,
     /// Stop after first solution (early termination for known single-solution puzzles)
     pub stop_after_first: bool,
-    /// Hit count (how often this config was used)
+    /// Hit count (how often this config was used and succeeded)
     pub hit_count: usize,
     /// Counterexample count (failures on this signature)
     pub counterexample_count: usize,
 }
 
+impl CompiledSolveConfig {
+    /// Confidence: Laplace-smoothed success rate.
+    pub fn confidence(&self) -> f64 {
+        let total = self.hit_count + self.counterexample_count;
+        if total == 0 { return 0.5; }
+        (self.hit_count as f64 + 1.0) / (total as f64 + 2.0)
+    }
+
+    /// Trial budget: bounded step limit for Strategy Zero.
+    /// Uses avg_steps * 2.0 as budget (enough headroom for variance),
+    /// with a floor of max_steps and a ceiling of 25% of external limit.
+    pub fn trial_budget(&self, external_limit: usize) -> usize {
+        let budget = if self.observations > 2 && self.avg_steps > 1.0 {
+            // Enough data: use 2x average steps for headroom
+            (self.avg_steps * 2.0) as usize
+        } else {
+            // Not enough data or trivially small: use max observed steps
+            self.max_steps.max(10)
+        };
+        budget.max(10).min(external_limit / 4)
+    }
+}
+
 /// KnowledgeCompiler: learns constraint-signature → optimal solve config.
 /// Consulted as "Strategy Zero" before any other strategy runs.
+///
+/// Signature version: v1 (difficulty:sorted_constraints)
+/// Change this when canonicalization rules change.
+const COMPILER_SIG_VERSION: &str = "v1";
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct KnowledgeCompiler {
     /// Compiled constraint signature → config
@@ -523,18 +555,28 @@ pub struct KnowledgeCompiler {
     pub misses: usize,
     /// False hits (compiled config tried but solve was wrong)
     pub false_hits: usize,
+    /// Steps saved by successful Strategy Zero (vs estimated fallback cost)
+    pub steps_saved: i64,
+    /// Confidence threshold for attempting Strategy Zero
+    pub confidence_threshold: f64,
 }
 
 impl KnowledgeCompiler {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self {
+            confidence_threshold: 0.7,
+            ..Default::default()
+        }
+    }
 
     /// Build constraint signature from puzzle features.
+    /// Includes version prefix for cache safety across refactors.
     pub fn signature(puzzle: &TemporalPuzzle) -> String {
         let mut sig_parts: Vec<String> = puzzle.constraints.iter()
             .map(|c| constraint_type_name(c))
             .collect();
         sig_parts.sort();
-        format!("{}:{}", puzzle.difficulty, sig_parts.join(","))
+        format!("{}:{}:{}", COMPILER_SIG_VERSION, puzzle.difficulty, sig_parts.join(","))
     }
 
     /// Compile knowledge from a ReasoningBank's trajectories.
@@ -543,22 +585,30 @@ impl KnowledgeCompiler {
             let correct = traj.verdict.as_ref().map(|v| v.is_success()).unwrap_or(false);
             if !correct { continue; }
 
-            // Build signature from constraint types
+            // Build signature from constraint types (versioned)
             let mut sig_parts = traj.constraint_types.clone();
             sig_parts.sort();
-            let sig = format!("{}:{}", traj.difficulty, sig_parts.join(","));
+            let sig = format!("{}:{}:{}", COMPILER_SIG_VERSION, traj.difficulty, sig_parts.join(","));
 
             if let Some(attempt) = traj.attempts.first() {
                 let entry = self.signature_cache.entry(sig).or_insert(CompiledSolveConfig {
                     use_rewriting: true,
                     max_steps: attempt.steps,
+                    avg_steps: 0.0,
+                    observations: 0,
                     expected_correct: true,
-                    stop_after_first: true, // compiled configs use early termination
+                    stop_after_first: true,
                     hit_count: 0,
                     counterexample_count: 0,
                 });
                 // Keep minimum steps that succeeded
                 entry.max_steps = entry.max_steps.min(attempt.steps);
+                // Running average of steps
+                let n = entry.observations as f64;
+                entry.avg_steps = (entry.avg_steps * n + attempt.steps as f64) / (n + 1.0);
+                entry.observations += 1;
+                // Compiled from successful trajectories → seed confidence
+                entry.hit_count = entry.observations;
             }
         }
     }
@@ -577,27 +627,32 @@ impl KnowledgeCompiler {
     }
 
     /// Record a counterexample: Strategy Zero failed on this signature.
+    /// Quarantine escalation: 2 false hits → disable the entry.
     pub fn record_failure(&mut self, puzzle: &TemporalPuzzle) {
         self.false_hits += 1;
         let sig = Self::signature(puzzle);
         if let Some(config) = self.signature_cache.get_mut(&sig) {
             config.counterexample_count += 1;
-            // If failure rate exceeds 30%, invalidate the cache entry
-            if config.hit_count > 0 {
-                let fail_rate = config.counterexample_count as f64
-                    / (config.hit_count + config.counterexample_count) as f64;
-                if fail_rate > 0.30 {
-                    config.expected_correct = false;
-                }
+            // 2-failure quarantine: disable after 2 false hits
+            if config.counterexample_count >= 2 {
+                config.expected_correct = false;
             }
         }
     }
 
-    /// Record a success: Strategy Zero worked on this signature.
-    pub fn record_success(&mut self, puzzle: &TemporalPuzzle) {
+    /// Record a successful Strategy Zero hit.
+    /// Tracks steps saved vs estimated fallback cost.
+    pub fn record_success(&mut self, puzzle: &TemporalPuzzle, actual_steps: usize) {
         let sig = Self::signature(puzzle);
         if let Some(config) = self.signature_cache.get_mut(&sig) {
             config.hit_count += 1;
+            // Estimate fallback cost as avg_steps * 2 (full scan is typically ~2x early-term)
+            let estimated_fallback = if config.avg_steps > 0.0 {
+                (config.avg_steps * 2.0) as i64
+            } else {
+                config.max_steps as i64
+            };
+            self.steps_saved += estimated_fallback - actual_steps as i64;
         }
     }
 
@@ -607,6 +662,39 @@ impl KnowledgeCompiler {
     }
 
     pub fn cache_size(&self) -> usize { self.signature_cache.len() }
+
+    /// Print diagnostic summary: per-signature stats, false hit distribution.
+    pub fn print_diagnostics(&self) {
+        println!();
+        println!("  Compiler Diagnostics (cache_size={})", self.cache_size());
+        println!("  {:<40} {:>5} {:>5} {:>6} {:>8} {:>6}",
+            "Signature", "Obs", "Hits", "Fails", "AvgStep", "Conf");
+        println!("  {}", "-".repeat(72));
+
+        let mut entries: Vec<_> = self.signature_cache.iter().collect();
+        entries.sort_by(|a, b| b.1.counterexample_count.cmp(&a.1.counterexample_count));
+
+        for (sig, config) in entries.iter().take(15) {
+            let short_sig = if sig.len() > 38 { &sig[..38] } else { sig };
+            println!("  {:<40} {:>5} {:>5} {:>6} {:>7.1} {:>.3}",
+                short_sig, config.observations, config.hit_count,
+                config.counterexample_count, config.avg_steps,
+                config.confidence());
+        }
+
+        // Summary
+        let total_configs = self.signature_cache.len();
+        let disabled = self.signature_cache.values().filter(|c| !c.expected_correct).count();
+        let total_false_hits: usize = self.signature_cache.values().map(|c| c.counterexample_count).sum();
+        let false_hit_sigs = self.signature_cache.values().filter(|c| c.counterexample_count > 0).count();
+
+        println!();
+        println!("  Total signatures: {}, disabled: {}", total_configs, disabled);
+        println!("  False hits: {} across {} signatures ({:.1}% of sigs)",
+            total_false_hits, false_hit_sigs,
+            if total_configs > 0 { false_hit_sigs as f64 / total_configs as f64 * 100.0 } else { 0.0 });
+        println!("  Steps saved by compiler: {}", self.steps_saved);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -858,17 +946,26 @@ impl AdaptiveSolver {
         let mut extra_steps: usize = 0;
         let mut extra_tool_calls: usize = 0;
 
-        // ─── Strategy Zero: KnowledgeCompiler ───────────────────────────
+        // ─── Strategy Zero: KnowledgeCompiler (bounded trial) ────────────
         if self.compiler_enabled {
-            if let Some(config) = self.compiler.lookup(puzzle) {
-                if config.expected_correct {
-                    // Use compiled config as Strategy Zero with early termination
-                    let compiled_steps = config.max_steps.max(5);
-                    self.solver.calendar_tool = config.use_rewriting;
-                    self.solver.stop_after_first = config.stop_after_first;
-                    self.solver.max_steps = self.external_step_limit
-                        .map(|l| l.min(compiled_steps))
-                        .unwrap_or(compiled_steps);
+            let conf_threshold = self.compiler.confidence_threshold;
+            // Extract all config data before releasing the borrow
+            let compiled = self.compiler.lookup(puzzle).map(|config| {
+                (
+                    config.expected_correct,
+                    config.confidence(),
+                    config.trial_budget(self.external_step_limit.unwrap_or(400)),
+                    config.use_rewriting,
+                    config.stop_after_first,
+                )
+            });
+
+            if let Some((expected_correct, confidence, trial_budget, use_rewriting, stop_first)) = compiled {
+                if expected_correct && confidence >= conf_threshold {
+                    // Bounded trial: cap at 25% of external limit to make misses cheap
+                    self.solver.calendar_tool = use_rewriting;
+                    self.solver.stop_after_first = stop_first;
+                    self.solver.max_steps = trial_budget;
 
                     let start = std::time::Instant::now();
                     let result = self.solver.solve(puzzle)?;
@@ -879,7 +976,7 @@ impl AdaptiveSolver {
 
                     if result.correct {
                         // Strategy Zero win — record and return
-                        self.compiler.record_success(puzzle);
+                        self.compiler.record_success(puzzle, result.steps);
                         let mut trajectory = Trajectory::new(&puzzle.id, puzzle.difficulty);
                         trajectory.constraint_types = constraint_types;
                         trajectory.latency_ms = latency;
@@ -903,7 +1000,7 @@ impl AdaptiveSolver {
 
                         return Ok(result);
                     } else {
-                        // Strategy Zero failed — record overhead, fall through
+                        // Strategy Zero failed — bounded trial overhead only
                         extra_steps += result.steps;
                         extra_tool_calls += result.tool_calls;
                         self.compiler.record_failure(puzzle);
