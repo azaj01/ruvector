@@ -3,6 +3,8 @@
 **Status**: Proposed
 **Date**: 2026-02-15
 **Decision owners**: RuVector platform team, Claude Flow orchestration team, RVF runtime team
+**Depends on**: ADR-029 (RVF Canonical Format), ADR-030 (Cognitive Container), ADR-033 (Progressive Indexing Hardening), ADR-034 (QR Cognitive Seed), ADR-035 (Capability Report)
+**Affects**: `rvf-types/src/agi_container.rs`, `rvf-runtime`
 
 ## Context
 
@@ -471,12 +473,159 @@ contradictions.
 **Exit criteria:** Two independent teams run the same RVF artifact and achieve
 the same benchmark scorecard.
 
-## Open Questions
+## Resolved Design Questions
 
-1. What is the first domain for proving the state-change thesis?
-   (repo automation, incident triage, governance workflows, edge autonomy)
-2. What authority levels by default?
-   (read-only, write-to-memory, execute-tools, write-to-external-systems)
+### Q1: First domain for proving the state-change thesis
+
+**Decision: Repo automation** (software engineering lifecycle).
+
+Rationale: This domain provides the strongest combination of (a) verifiable
+outcomes (tests pass, code compiles, PR merges), (b) tool-rich environment
+(git, CI, code editors via Claude Code), (c) naturally occurring event streams
+(issues, commits, reviews), and (d) existing infrastructure in Claude Code +
+Claude Flow. The evaluation harness measures: issues solved, test success rate,
+regression introduction rate, cost per solved issue, and witness chain
+completeness.
+
+Subsequent domains (incident triage, governance workflows, edge autonomy)
+are pursued after the repo automation scorecard achieves >= 60/100 solved
+with zero policy violations.
+
+### Q2: Authority levels
+
+**Decision: Four-level authority model, default ReadMemory.**
+
+```rust
+#[repr(u8)]
+pub enum AuthorityLevel {
+    /// Read-only: query vectors, graphs, memories. No mutations.
+    ReadOnly = 0,
+    /// Write to internal memory: commit world model deltas behind
+    /// coherence gates. No external tool calls.
+    WriteMemory = 1,
+    /// Execute tools: run sandboxed tools (file read/write, tests,
+    /// code generation). External side effects are gated by policy.
+    ExecuteTools = 2,
+    /// Write external: push code, create PRs, send messages, modify
+    /// infrastructure. Requires explicit policy grant per action class.
+    WriteExternal = 3,
+}
+```
+
+Each action in the world model must reference a policy decision node
+(invariant #3, "Action gating") that grants at least the required authority
+level. The container manifest declares the maximum authority level permitted
+for a given execution. Higher levels require explicit policy override.
+
+Default for Replay mode: `ReadOnly`.
+Default for Verify mode: `ExecuteTools`.
+Default for Live mode: `WriteMemory` (escalation to higher levels requires
+policy grant per action class).
+
+### Q3: Resource budgets
+
+**Decision: Per-task resource budgets with hard caps.**
+
+Every task execution is bounded by:
+
+| Resource | Default Cap | Override |
+|----------|-------------|---------|
+| Wall-clock time per task | 300 seconds | Policy override, max 3600s |
+| Total model tokens per task | 200,000 | Policy override, max 1,000,000 |
+| Total cost per task | $1.00 | Policy override, max $10.00 |
+| Tool calls per task | 50 | Policy override, max 500 |
+| External write actions per task | 0 (ReadOnly) | Requires WriteExternal authority |
+
+Budget exhaustion triggers graceful degradation: the task enters `Skipped`
+outcome with a `BudgetExhausted` postmortem in the witness bundle.
+
+### Q4: Coherence thresholds
+
+**Decision: Three configurable thresholds stored in the container header.**
+
+| Threshold | Default | Effect when breached |
+|-----------|---------|---------------------|
+| `min_coherence_score` | 0.70 | Block all commits; enter repair mode |
+| `max_contradiction_rate` | 5.0 per 100 events | Freeze skill promotion |
+| `max_rollback_ratio` | 0.20 | Halt Live execution; require human review |
+
+These map to ADR-033's quality framework: the coherence score is analogous
+to `ResponseQuality` -- it signals whether the system's internal state is
+trustworthy enough to act on.
+
+## Wire Format
+
+### AgiContainerHeader (64 bytes, `repr(C)`)
+
+The AGI container is stored as a `Meta` segment (`SegmentType::Meta = 0x07`)
+in the RVF file, alongside the KERNEL_SEG, WASM_SEG, VEC_SEG, INDEX_SEG,
+WITNESS_SEG, and CRYPTO_SEG that hold the actual payload data.
+
+```
+Offset  Type        Field               Description
+------  ----        -----               -----------
+0x00    u32         magic               0x52564147 ("RVAG")
+0x04    u16         version             Header format version (currently 1)
+0x06    u16         flags               Bitfield (see below)
+0x08    [u8; 16]    container_id        Unique container UUID
+0x18    [u8; 16]    build_id            Build UUID (changes on repackaging)
+0x28    u64         created_ns          Creation timestamp (nanos since epoch)
+0x30    [u8; 8]     model_id_hash       SHA-256 of pinned model ID, truncated
+0x38    [u8; 8]     policy_hash         SHA-256 of governance policy, truncated
+```
+
+### Flags (u16 bitfield)
+
+```
+Bit   Name                    Description
+---   ----                    -----------
+0     AGI_HAS_KERNEL          KERNEL_SEG with micro Linux kernel present
+1     AGI_HAS_WASM            WASM_SEG modules present
+2     AGI_HAS_ORCHESTRATOR    Claude Code + Claude Flow config present
+3     AGI_HAS_WORLD_MODEL     VEC_SEG + INDEX_SEG world model data present
+4     AGI_HAS_EVAL            Evaluation harness (tasks + graders) present
+5     AGI_HAS_SKILLS          Promoted skill library present
+6     AGI_HAS_WITNESS         ADR-035 witness chain present
+7     AGI_SIGNED              Container is cryptographically signed
+8     AGI_REPLAY_CAPABLE      All tool outputs stored; supports replay mode
+9     AGI_OFFLINE_CAPABLE     Container can run without network access
+10    AGI_HAS_TOOLS           MCP tool adapter registry present
+11    AGI_HAS_COHERENCE_GATES Coherence gate configuration present
+```
+
+### TLV Manifest Tags
+
+Following the header, a TLV (tag-length-value) manifest contains the
+container's configuration sections:
+
+| Tag    | Name                   | Content |
+|--------|------------------------|---------|
+| 0x0100 | CONTAINER_ID           | Container UUID |
+| 0x0101 | BUILD_ID               | Build UUID |
+| 0x0102 | MODEL_ID               | Pinned model identifier (UTF-8) |
+| 0x0103 | POLICY                 | Serialized governance policy |
+| 0x0104 | ORCHESTRATOR           | Claude Code + Claude Flow config |
+| 0x0105 | TOOL_REGISTRY          | MCP tool adapter registry |
+| 0x0106 | AGENT_PROMPTS          | Agent role prompts |
+| 0x0107 | EVAL_TASKS             | Evaluation task suite |
+| 0x0108 | EVAL_GRADERS           | Grading rules |
+| 0x0109 | SKILL_LIBRARY          | Promoted skill library |
+| 0x010A | REPLAY_SCRIPT          | Replay automation script |
+| 0x010B | KERNEL_CONFIG          | Kernel boot parameters |
+| 0x010C | NETWORK_CONFIG         | Network configuration |
+| 0x010D | COHERENCE_CONFIG       | Coherence gate thresholds and rules |
+| 0x010E | PROJECT_INSTRUCTIONS   | Claude.md project instructions |
+| 0x010F | DEPENDENCY_SNAPSHOT    | Dependency snapshot hashes |
+| 0x0110 | AUTHORITY_CONFIG       | Authority level and resource budgets |
+| 0x0111 | DOMAIN_PROFILE         | Target domain profile (RVText, etc.) |
+
+Unknown tags are ignored (forward-compatible).
+
+### Implementation
+
+Types are defined in `rvf-types/src/agi_container.rs`. The `AgiContainerHeader`
+struct, `ExecutionMode`, `AuthorityLevel`, and `ContainerSegments` types provide
+compile-time-checked serialization with round-trip tests.
 
 ## Acceptance Test
 
@@ -493,9 +642,20 @@ Run the same RVF artifact on two separate machines owned by two separate teams.
 
 ## References
 
+- ADR-029: RVF Canonical Format (segment model, wire format, manifest)
+- ADR-030: Cognitive Container (KERNEL_SEG, EBPF_SEG, three-tier execution)
+- ADR-031: RVCOW Branching (COW branching, KernelBinding)
+- ADR-033: Progressive Indexing Hardening (quality framework, coherence gates, safety budgets)
+- ADR-034: QR Cognitive Seed (portable bootstrap, zero-dep crypto)
 - ADR-035: Capability Report (witness bundles, scorecards, governance)
-- ADR-034: QR Cognitive Seed
 - RVF format specification (rvf-types, rvf-runtime, rvf-manifest)
 - RFC 8032: Ed25519
 - FIPS 180-4: SHA-256
 - Dynamic minimum-cut (arXiv preprint referenced in RuVector mincut crate)
+
+## Revision History
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0 | 2026-02-15 | ruv.io | Initial proposal |
+| 1.1 | 2026-02-15 | architecture review | Resolved open questions (domain, authority, resource budgets, coherence thresholds). Added wire format section. Added cross-references to ADR-029/030/031/033. Added AuthorityLevel enum and resource budget types. Tightened ContainerSegments validation. |

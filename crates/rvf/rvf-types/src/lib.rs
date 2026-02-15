@@ -121,8 +121,10 @@ pub use wasm_bootstrap::{
 };
 pub use agi_container::{
     AgiContainerHeader, ContainerSegments, ContainerError, ExecutionMode,
-    AGI_MAGIC, AGI_HEADER_SIZE,
+    AuthorityLevel, ResourceBudget, CoherenceThresholds,
+    AGI_MAGIC, AGI_HEADER_SIZE, AGI_MAX_CONTAINER_SIZE,
     AGI_HAS_KERNEL, AGI_HAS_WASM, AGI_HAS_ORCHESTRATOR, AGI_HAS_WORLD_MODEL,
     AGI_HAS_EVAL, AGI_HAS_SKILLS, AGI_HAS_WITNESS, AGI_SIGNED,
     AGI_REPLAY_CAPABLE, AGI_OFFLINE_CAPABLE, AGI_HAS_TOOLS, AGI_HAS_COHERENCE_GATES,
+    AGI_TAG_AUTHORITY_CONFIG, AGI_TAG_DOMAIN_PROFILE,
 };

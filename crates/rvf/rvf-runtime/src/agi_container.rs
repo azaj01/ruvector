@@ -464,6 +464,8 @@ mod tests {
             witness_count: 100,
             crypto_present: false,
             manifest_present: false,
+            orchestrator_present: true,
+            world_model_present: true,
             total_size: 0,
         };
 
@@ -545,10 +547,11 @@ mod tests {
 
     #[test]
     fn segment_validation() {
-        // Live mode needs kernel or WASM.
+        // Live mode needs kernel or WASM, plus world model.
         let segs = ContainerSegments {
             manifest_present: true,
             kernel_present: true,
+            world_model_present: true,
             ..Default::default()
         };
         assert!(segs.validate(ExecutionMode::Live).is_ok());

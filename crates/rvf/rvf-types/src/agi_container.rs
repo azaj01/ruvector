@@ -16,6 +16,9 @@ pub const AGI_MAGIC: u32 = 0x5256_4147;
 /// Size of the AGI container header in bytes.
 pub const AGI_HEADER_SIZE: usize = 64;
 
+/// Maximum container size: 16 GiB. Prevents unbounded resource consumption.
+pub const AGI_MAX_CONTAINER_SIZE: u64 = 16 * 1024 * 1024 * 1024;
+
 // --- Flags ---
 
 /// Container includes a KERNEL_SEG with micro Linux kernel.
@@ -77,6 +80,10 @@ pub const AGI_TAG_COHERENCE_CONFIG: u16 = 0x010D;
 pub const AGI_TAG_PROJECT_INSTRUCTIONS: u16 = 0x010E;
 /// Dependency snapshot hashes (pinned repos, packages).
 pub const AGI_TAG_DEPENDENCY_SNAPSHOT: u16 = 0x010F;
+/// Authority level and resource budget configuration.
+pub const AGI_TAG_AUTHORITY_CONFIG: u16 = 0x0110;
+/// Target domain profile identifier.
+pub const AGI_TAG_DOMAIN_PROFILE: u16 = 0x0111;
 
 // --- Execution mode ---
 
@@ -105,6 +112,211 @@ impl TryFrom<u8> for ExecutionMode {
             2 => Ok(Self::Live),
             other => Err(other),
         }
+    }
+}
+
+// --- Authority level ---
+
+/// Authority level controlling what actions a container execution can perform.
+///
+/// Each action in the world model must reference a policy decision node
+/// that grants at least the required authority level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[repr(u8)]
+pub enum AuthorityLevel {
+    /// Read-only: query vectors, graphs, memories. No mutations.
+    ReadOnly = 0,
+    /// Write to internal memory: commit world model deltas behind
+    /// coherence gates. No external tool calls.
+    WriteMemory = 1,
+    /// Execute tools: run sandboxed tools (file read/write, tests,
+    /// code generation). External side effects gated by policy.
+    ExecuteTools = 2,
+    /// Write external: push code, create PRs, send messages, modify
+    /// infrastructure. Requires explicit policy grant per action class.
+    WriteExternal = 3,
+}
+
+impl TryFrom<u8> for AuthorityLevel {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::ReadOnly),
+            1 => Ok(Self::WriteMemory),
+            2 => Ok(Self::ExecuteTools),
+            3 => Ok(Self::WriteExternal),
+            other => Err(other),
+        }
+    }
+}
+
+impl AuthorityLevel {
+    /// Default authority for the given execution mode.
+    pub const fn default_for_mode(mode: ExecutionMode) -> Self {
+        match mode {
+            ExecutionMode::Replay => Self::ReadOnly,
+            ExecutionMode::Verify => Self::ExecuteTools,
+            ExecutionMode::Live => Self::WriteMemory,
+        }
+    }
+
+    /// Check if this authority level permits a given required level.
+    pub const fn permits(&self, required: AuthorityLevel) -> bool {
+        (*self as u8) >= (required as u8)
+    }
+}
+
+// --- Resource budgets ---
+
+/// Per-task resource budget with hard caps.
+///
+/// Budget exhaustion triggers graceful degradation: the task enters `Skipped`
+/// outcome with a `BudgetExhausted` postmortem in the witness bundle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResourceBudget {
+    /// Maximum wall-clock time per task in seconds. Default: 300.
+    pub max_time_secs: u32,
+    /// Maximum total model tokens per task. Default: 200,000.
+    pub max_tokens: u32,
+    /// Maximum cost per task in microdollars. Default: 1,000,000 ($1.00).
+    pub max_cost_microdollars: u32,
+    /// Maximum tool calls per task. Default: 50.
+    pub max_tool_calls: u16,
+    /// Maximum external write actions per task. Default: 0.
+    pub max_external_writes: u16,
+}
+
+impl Default for ResourceBudget {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl ResourceBudget {
+    /// Default resource budget for a single task.
+    pub const DEFAULT: Self = Self {
+        max_time_secs: 300,
+        max_tokens: 200_000,
+        max_cost_microdollars: 1_000_000,
+        max_tool_calls: 50,
+        max_external_writes: 0,
+    };
+
+    /// Extended budget (4x default) for high-value tasks.
+    pub const EXTENDED: Self = Self {
+        max_time_secs: 1200,
+        max_tokens: 800_000,
+        max_cost_microdollars: 4_000_000,
+        max_tool_calls: 200,
+        max_external_writes: 10,
+    };
+
+    /// Maximum configurable budget (hard ceiling, not overridable).
+    pub const MAX: Self = Self {
+        max_time_secs: 3600,
+        max_tokens: 1_000_000,
+        max_cost_microdollars: 10_000_000,
+        max_tool_calls: 500,
+        max_external_writes: 50,
+    };
+
+    /// Clamp this budget to not exceed the MAX limits.
+    pub const fn clamped(self) -> Self {
+        Self {
+            max_time_secs: if self.max_time_secs > Self::MAX.max_time_secs {
+                Self::MAX.max_time_secs
+            } else {
+                self.max_time_secs
+            },
+            max_tokens: if self.max_tokens > Self::MAX.max_tokens {
+                Self::MAX.max_tokens
+            } else {
+                self.max_tokens
+            },
+            max_cost_microdollars: if self.max_cost_microdollars
+                > Self::MAX.max_cost_microdollars
+            {
+                Self::MAX.max_cost_microdollars
+            } else {
+                self.max_cost_microdollars
+            },
+            max_tool_calls: if self.max_tool_calls > Self::MAX.max_tool_calls {
+                Self::MAX.max_tool_calls
+            } else {
+                self.max_tool_calls
+            },
+            max_external_writes: if self.max_external_writes
+                > Self::MAX.max_external_writes
+            {
+                Self::MAX.max_external_writes
+            } else {
+                self.max_external_writes
+            },
+        }
+    }
+}
+
+// --- Coherence thresholds ---
+
+/// Configurable coherence thresholds for structural health gating.
+///
+/// These map to ADR-033's quality framework: the coherence score is analogous
+/// to `ResponseQuality` -- it signals whether the system's internal state is
+/// trustworthy enough to act on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CoherenceThresholds {
+    /// Minimum coherence score (0.0 to 1.0). Below this, block all commits
+    /// and enter repair mode. Default: 0.70.
+    pub min_coherence_score: f32,
+    /// Maximum contradiction rate (contradictions per 100 events).
+    /// Above this, freeze skill promotion. Default: 5.0.
+    pub max_contradiction_rate: f32,
+    /// Maximum rollback ratio (fraction of tasks that required rollback).
+    /// Above this, halt Live execution; require human review. Default: 0.20.
+    pub max_rollback_ratio: f32,
+}
+
+impl Default for CoherenceThresholds {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl CoherenceThresholds {
+    /// Default coherence thresholds.
+    pub const DEFAULT: Self = Self {
+        min_coherence_score: 0.70,
+        max_contradiction_rate: 5.0,
+        max_rollback_ratio: 0.20,
+    };
+
+    /// Strict thresholds for production.
+    pub const STRICT: Self = Self {
+        min_coherence_score: 0.85,
+        max_contradiction_rate: 2.0,
+        max_rollback_ratio: 0.10,
+    };
+
+    /// Validate that threshold values are within valid ranges.
+    pub fn validate(&self) -> Result<(), ContainerError> {
+        if self.min_coherence_score < 0.0 || self.min_coherence_score > 1.0 {
+            return Err(ContainerError::InvalidConfig(
+                "min_coherence_score must be in [0.0, 1.0]",
+            ));
+        }
+        if self.max_contradiction_rate < 0.0 {
+            return Err(ContainerError::InvalidConfig(
+                "max_contradiction_rate must be >= 0.0",
+            ));
+        }
+        if self.max_rollback_ratio < 0.0 || self.max_rollback_ratio > 1.0 {
+            return Err(ContainerError::InvalidConfig(
+                "max_rollback_ratio must be in [0.0, 1.0]",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -174,6 +386,16 @@ impl AgiContainerHeader {
     /// Check if the container can run offline.
     pub const fn is_offline_capable(&self) -> bool {
         self.flags & AGI_OFFLINE_CAPABLE != 0
+    }
+
+    /// Check if the container has a world model (VEC + INDEX segments).
+    pub const fn has_world_model(&self) -> bool {
+        self.flags & AGI_HAS_WORLD_MODEL != 0
+    }
+
+    /// Check if the container has coherence gate configuration.
+    pub const fn has_coherence_gates(&self) -> bool {
+        self.flags & AGI_HAS_COHERENCE_GATES != 0
     }
 
     /// Serialize header to a 64-byte array.
@@ -253,6 +475,10 @@ pub struct ContainerSegments {
     pub crypto_present: bool,
     /// META segment with AGI manifest: present.
     pub manifest_present: bool,
+    /// Orchestrator configuration present.
+    pub orchestrator_present: bool,
+    /// World model data present (VEC + INDEX segments).
+    pub world_model_present: bool,
     /// Total container size in bytes.
     pub total_size: u64,
 }
@@ -264,6 +490,13 @@ impl ContainerSegments {
         // All modes require the manifest.
         if !self.manifest_present {
             return Err(ContainerError::MissingSegment("AGI manifest"));
+        }
+
+        // Size check.
+        if self.total_size > AGI_MAX_CONTAINER_SIZE {
+            return Err(ContainerError::TooLarge {
+                size: self.total_size,
+            });
         }
 
         match mode {
@@ -278,6 +511,15 @@ impl ContainerSegments {
                 if !self.kernel_present && self.wasm_count == 0 {
                     return Err(ContainerError::MissingSegment(
                         "kernel or WASM runtime",
+                    ));
+                }
+                // Verify/Live need world model data for meaningful operation.
+                if !self.world_model_present
+                    && self.vec_segment_count == 0
+                    && self.index_segment_count == 0
+                {
+                    return Err(ContainerError::MissingSegment(
+                        "world model (VEC or INDEX segments)",
                     ));
                 }
             }
@@ -301,6 +543,15 @@ impl ContainerSegments {
         if self.crypto_present {
             flags |= AGI_SIGNED;
         }
+        if self.orchestrator_present {
+            flags |= AGI_HAS_ORCHESTRATOR;
+        }
+        if self.world_model_present
+            || self.vec_segment_count > 0
+            || self.index_segment_count > 0
+        {
+            flags |= AGI_HAS_WORLD_MODEL;
+        }
         flags
     }
 }
@@ -316,15 +567,35 @@ pub enum ContainerError {
     InvalidConfig(&'static str),
     /// Signature verification failed.
     SignatureInvalid,
+    /// Authority level insufficient for the requested action.
+    InsufficientAuthority {
+        required: u8,
+        granted: u8,
+    },
+    /// Resource budget exceeded.
+    BudgetExhausted(&'static str),
 }
 
 impl core::fmt::Display for ContainerError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ContainerError::MissingSegment(s) => write!(f, "missing segment: {s}"),
-            ContainerError::TooLarge { size } => write!(f, "container too large: {size} bytes"),
+            ContainerError::TooLarge { size } => {
+                write!(f, "container too large: {size} bytes")
+            }
             ContainerError::InvalidConfig(s) => write!(f, "invalid config: {s}"),
-            ContainerError::SignatureInvalid => write!(f, "signature verification failed"),
+            ContainerError::SignatureInvalid => {
+                write!(f, "signature verification failed")
+            }
+            ContainerError::InsufficientAuthority { required, granted } => {
+                write!(
+                    f,
+                    "insufficient authority: required level {required}, granted {granted}"
+                )
+            }
+            ContainerError::BudgetExhausted(resource) => {
+                write!(f, "resource budget exhausted: {resource}")
+            }
         }
     }
 }
@@ -332,6 +603,7 @@ impl core::fmt::Display for ContainerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     #[test]
     fn agi_header_size() {
@@ -386,6 +658,8 @@ mod tests {
         assert!(hdr.is_signed());
         assert!(!hdr.is_replay_capable());
         assert!(!hdr.is_offline_capable());
+        assert!(!hdr.has_world_model());
+        assert!(!hdr.has_coherence_gates());
     }
 
     #[test]
@@ -425,20 +699,40 @@ mod tests {
     }
 
     #[test]
-    fn segments_validate_live_with_kernel() {
+    fn segments_validate_live_needs_world_model() {
         let segs = ContainerSegments {
             manifest_present: true,
             kernel_present: true,
+            vec_segment_count: 0,
+            index_segment_count: 0,
+            world_model_present: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            segs.validate(ExecutionMode::Live),
+            Err(ContainerError::MissingSegment(
+                "world model (VEC or INDEX segments)"
+            ))
+        );
+    }
+
+    #[test]
+    fn segments_validate_live_with_kernel_and_world_model() {
+        let segs = ContainerSegments {
+            manifest_present: true,
+            kernel_present: true,
+            world_model_present: true,
             ..Default::default()
         };
         assert!(segs.validate(ExecutionMode::Live).is_ok());
     }
 
     #[test]
-    fn segments_validate_live_with_wasm() {
+    fn segments_validate_live_with_wasm_and_vec() {
         let segs = ContainerSegments {
             manifest_present: true,
             wasm_count: 2,
+            vec_segment_count: 1,
             ..Default::default()
         };
         assert!(segs.validate(ExecutionMode::Live).is_ok());
@@ -455,12 +749,29 @@ mod tests {
     }
 
     #[test]
+    fn segments_validate_too_large() {
+        let segs = ContainerSegments {
+            manifest_present: true,
+            total_size: AGI_MAX_CONTAINER_SIZE + 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            segs.validate(ExecutionMode::Replay),
+            Err(ContainerError::TooLarge {
+                size: AGI_MAX_CONTAINER_SIZE + 1
+            })
+        );
+    }
+
+    #[test]
     fn segments_to_flags() {
         let segs = ContainerSegments {
             kernel_present: true,
             wasm_count: 1,
             witness_count: 5,
             crypto_present: true,
+            orchestrator_present: true,
+            vec_segment_count: 3,
             ..Default::default()
         };
         let flags = segs.to_flags();
@@ -468,6 +779,8 @@ mod tests {
         assert_ne!(flags & AGI_HAS_WASM, 0);
         assert_ne!(flags & AGI_HAS_WITNESS, 0);
         assert_ne!(flags & AGI_SIGNED, 0);
+        assert_ne!(flags & AGI_HAS_ORCHESTRATOR, 0);
+        assert_ne!(flags & AGI_HAS_WORLD_MODEL, 0);
     }
 
     #[test]
@@ -476,5 +789,163 @@ mod tests {
         assert!(format!("{e}").contains("kernel"));
         let e2 = ContainerError::TooLarge { size: 999 };
         assert!(format!("{e2}").contains("999"));
+        let e3 = ContainerError::InsufficientAuthority {
+            required: 3,
+            granted: 1,
+        };
+        assert!(format!("{e3}").contains("required level 3"));
+        let e4 = ContainerError::BudgetExhausted("tokens");
+        assert!(format!("{e4}").contains("tokens"));
+    }
+
+    // --- Authority level tests ---
+
+    #[test]
+    fn authority_level_round_trip() {
+        for raw in 0..=3u8 {
+            let a = AuthorityLevel::try_from(raw).unwrap();
+            assert_eq!(a as u8, raw);
+        }
+        assert!(AuthorityLevel::try_from(4).is_err());
+    }
+
+    #[test]
+    fn authority_level_ordering() {
+        assert!(AuthorityLevel::ReadOnly < AuthorityLevel::WriteMemory);
+        assert!(AuthorityLevel::WriteMemory < AuthorityLevel::ExecuteTools);
+        assert!(AuthorityLevel::ExecuteTools < AuthorityLevel::WriteExternal);
+    }
+
+    #[test]
+    fn authority_permits() {
+        assert!(AuthorityLevel::WriteExternal.permits(AuthorityLevel::ReadOnly));
+        assert!(AuthorityLevel::WriteExternal.permits(AuthorityLevel::WriteExternal));
+        assert!(AuthorityLevel::ExecuteTools.permits(AuthorityLevel::WriteMemory));
+        assert!(!AuthorityLevel::ReadOnly.permits(AuthorityLevel::WriteMemory));
+        assert!(!AuthorityLevel::WriteMemory.permits(AuthorityLevel::ExecuteTools));
+    }
+
+    #[test]
+    fn authority_default_for_mode() {
+        assert_eq!(
+            AuthorityLevel::default_for_mode(ExecutionMode::Replay),
+            AuthorityLevel::ReadOnly
+        );
+        assert_eq!(
+            AuthorityLevel::default_for_mode(ExecutionMode::Verify),
+            AuthorityLevel::ExecuteTools
+        );
+        assert_eq!(
+            AuthorityLevel::default_for_mode(ExecutionMode::Live),
+            AuthorityLevel::WriteMemory
+        );
+    }
+
+    // --- Resource budget tests ---
+
+    #[test]
+    fn resource_budget_default() {
+        let b = ResourceBudget::default();
+        assert_eq!(b.max_time_secs, 300);
+        assert_eq!(b.max_tokens, 200_000);
+        assert_eq!(b.max_cost_microdollars, 1_000_000);
+        assert_eq!(b.max_tool_calls, 50);
+        assert_eq!(b.max_external_writes, 0);
+    }
+
+    #[test]
+    fn resource_budget_clamped() {
+        let over = ResourceBudget {
+            max_time_secs: 999_999,
+            max_tokens: 999_999_999,
+            max_cost_microdollars: 999_999_999,
+            max_tool_calls: 60_000,
+            max_external_writes: 60_000,
+        };
+        let clamped = over.clamped();
+        assert_eq!(clamped.max_time_secs, ResourceBudget::MAX.max_time_secs);
+        assert_eq!(clamped.max_tokens, ResourceBudget::MAX.max_tokens);
+        assert_eq!(
+            clamped.max_cost_microdollars,
+            ResourceBudget::MAX.max_cost_microdollars
+        );
+        assert_eq!(clamped.max_tool_calls, ResourceBudget::MAX.max_tool_calls);
+        assert_eq!(
+            clamped.max_external_writes,
+            ResourceBudget::MAX.max_external_writes
+        );
+    }
+
+    #[test]
+    fn resource_budget_within_max_unchanged() {
+        let within = ResourceBudget::DEFAULT;
+        let clamped = within.clamped();
+        assert_eq!(clamped, within);
+    }
+
+    // --- Coherence threshold tests ---
+
+    #[test]
+    fn coherence_thresholds_default() {
+        let ct = CoherenceThresholds::default();
+        assert!((ct.min_coherence_score - 0.70).abs() < f32::EPSILON);
+        assert!((ct.max_contradiction_rate - 5.0).abs() < f32::EPSILON);
+        assert!((ct.max_rollback_ratio - 0.20).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn coherence_thresholds_strict() {
+        let ct = CoherenceThresholds::STRICT;
+        assert!((ct.min_coherence_score - 0.85).abs() < f32::EPSILON);
+        assert!((ct.max_contradiction_rate - 2.0).abs() < f32::EPSILON);
+        assert!((ct.max_rollback_ratio - 0.10).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn coherence_thresholds_validate_valid() {
+        assert!(CoherenceThresholds::DEFAULT.validate().is_ok());
+        assert!(CoherenceThresholds::STRICT.validate().is_ok());
+    }
+
+    #[test]
+    fn coherence_thresholds_validate_bad_score() {
+        let ct = CoherenceThresholds {
+            min_coherence_score: 1.5,
+            ..CoherenceThresholds::DEFAULT
+        };
+        assert_eq!(
+            ct.validate(),
+            Err(ContainerError::InvalidConfig(
+                "min_coherence_score must be in [0.0, 1.0]"
+            ))
+        );
+    }
+
+    #[test]
+    fn coherence_thresholds_validate_negative_rate() {
+        let ct = CoherenceThresholds {
+            max_contradiction_rate: -1.0,
+            ..CoherenceThresholds::DEFAULT
+        };
+        assert_eq!(
+            ct.validate(),
+            Err(ContainerError::InvalidConfig(
+                "max_contradiction_rate must be >= 0.0"
+            ))
+        );
+    }
+
+    #[test]
+    fn coherence_thresholds_validate_bad_ratio() {
+        let ct = CoherenceThresholds {
+            max_rollback_ratio: 2.0,
+            ..CoherenceThresholds::DEFAULT
+        };
+        assert_eq!(
+            ct.validate(),
+            Err(ContainerError::InvalidConfig(
+                "max_rollback_ratio must be in [0.0, 1.0]"
+            ))
+        );
     }
 }
