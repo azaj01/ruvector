@@ -104,3 +104,7 @@ path = "src/bin/agi_proof_harness.rs"
 [[bin]]
 name = "acceptance-rvf"
 path = "src/bin/acceptance_rvf.rs"
+
+[[bin]]
+name = "wasm-solver-bench"
+path = "src/bin/wasm_solver_bench.rs"
