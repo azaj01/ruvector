@@ -86,6 +86,26 @@ const results = store.query(new Float32Array(384), 10);
 console.log('Results:', results);
 ```
 
+## Self-Learning Solver
+
+The `@ruvector/rvf-solver` package provides a self-learning temporal solver with Thompson Sampling, running entirely in WebAssembly.
+
+```typescript
+import { RvfSolver } from '@ruvector/rvf';
+
+const solver = await RvfSolver.create();
+
+// Train on 100 puzzles
+const result = solver.train({ count: 100 });
+console.log(`Accuracy: ${(result.accuracy * 100).toFixed(1)}%`);
+
+// Run acceptance test (A/B/C ablation)
+const manifest = solver.acceptance({ cycles: 3 });
+console.log(`All passed: ${manifest.allPassed}`);
+
+solver.destroy();
+```
+
 ## What is RVF?
 
 RVF (RuVector Format) is a universal binary substrate that merges database, model, graph engine, kernel, and attestation into a single deployable file. A `.rvf` file is segmented — each segment carries a different payload type, and unknown segments are preserved by all tools.
@@ -117,7 +137,7 @@ RVF (RuVector Format) is a universal binary substrate that merges database, mode
 
 ## N-API Methods (Node.js)
 
-19 methods on the `RvfDatabase` class:
+23 methods on the `RvfDatabase` class:
 
 | Method | Description |
 |--------|-------------|
@@ -140,6 +160,10 @@ RVF (RuVector Format) is a universal binary substrate that merges database, mode
 | `db.embedEbpf(bytes)` | Embed eBPF program |
 | `db.extractEbpf()` | Extract eBPF program |
 | `db.segments()` | List all segments |
+| `db.metric()` | Get distance metric name |
+| `db.indexStats()` | HNSW index statistics |
+| `db.verifyWitness()` | Verify witness chain integrity |
+| `db.freeze()` | Snapshot-freeze current state |
 
 ## WASM Exports
 
@@ -318,6 +342,7 @@ const results = await db.search([0.1, 0.2, ...], 5);
 | `@ruvector/rvf-node` | Native N-API bindings | Node.js |
 | `@ruvector/rvf-wasm` | WASM build (~46 KB + ~5.5 KB tile) | Browser, Deno, Edge |
 | `@ruvector/rvf-mcp-server` | MCP server for AI agents | Node.js |
+| `@ruvector/rvf-solver` | Self-learning temporal solver | Browser, Node.js, Edge |
 
 ## Crate Structure (Rust)
 

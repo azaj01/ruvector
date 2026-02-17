@@ -41,12 +41,19 @@ export interface CycleMetrics {
   cycle: number;
   accuracy: number;
   costPerSolve: number;
+  noiseAccuracy: number;
+  violations: number;
+  patternsLearned: number;
 }
 
 /** Result of a single acceptance mode (A, B, or C). */
 export interface AcceptanceModeResult {
   passed: boolean;
-  finalAccuracy: number;
+  accuracyMaintained: boolean;
+  costImproved: boolean;
+  robustnessImproved: boolean;
+  zeroViolations: boolean;
+  dimensionsImproved: number;
   cycles: CycleMetrics[];
 }
 

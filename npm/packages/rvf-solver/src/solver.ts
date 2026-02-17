@@ -101,17 +101,25 @@ export class RvfSolver {
     if (correct < 0) {
       throw new Error('Training failed: invalid handle');
     }
-    const result = readJson<TrainResult>(
+    const raw = readJson<any>(
       this.wasm,
       this.handle,
       (h) => this.wasm.rvf_solver_result_len(h),
       (h, p) => this.wasm.rvf_solver_result_read(h, p),
     );
-    return result ?? {
-      trained: options.count,
-      correct,
-      accuracy: correct / options.count,
-      patternsLearned: 0,
+    if (!raw) {
+      return {
+        trained: options.count,
+        correct,
+        accuracy: correct / options.count,
+        patternsLearned: 0,
+      };
+    }
+    return {
+      trained: raw.trained,
+      correct: raw.correct,
+      accuracy: raw.accuracy,
+      patternsLearned: raw.patterns_learned ?? raw.patternsLearned ?? 0,
     };
   }
 
@@ -149,11 +157,27 @@ export class RvfSolver {
     if (!manifest) {
       throw new Error('Failed to read acceptance manifest');
     }
+    const mapMode = (m: any) => ({
+      passed: m.passed,
+      accuracyMaintained: m.accuracy_maintained ?? m.accuracyMaintained ?? false,
+      costImproved: m.cost_improved ?? m.costImproved ?? false,
+      robustnessImproved: m.robustness_improved ?? m.robustnessImproved ?? false,
+      zeroViolations: m.zero_violations ?? m.zeroViolations ?? true,
+      dimensionsImproved: m.dimensions_improved ?? m.dimensionsImproved ?? 0,
+      cycles: (m.cycles ?? []).map((c: any) => ({
+        cycle: c.cycle,
+        accuracy: c.accuracy,
+        costPerSolve: c.cost_per_solve ?? c.costPerSolve ?? 0,
+        noiseAccuracy: c.noise_accuracy ?? c.noiseAccuracy ?? 0,
+        violations: c.violations ?? 0,
+        patternsLearned: c.patterns_learned ?? c.patternsLearned ?? 0,
+      })),
+    });
     return {
       version: manifest.version,
-      modeA: manifest.mode_a,
-      modeB: manifest.mode_b,
-      modeC: manifest.mode_c,
+      modeA: mapMode(manifest.mode_a),
+      modeB: mapMode(manifest.mode_b),
+      modeC: mapMode(manifest.mode_c),
       allPassed: manifest.all_passed,
       witnessEntries: manifest.witness_entries,
       witnessChainBytes: manifest.witness_chain_bytes,
@@ -165,12 +189,22 @@ export class RvfSolver {
    * context buckets, KnowledgeCompiler cache stats).
    */
   policy(): PolicyState | null {
-    return readJson<PolicyState>(
+    const raw = readJson<any>(
       this.wasm,
       this.handle,
       (h) => this.wasm.rvf_solver_policy_len(h),
       (h, p) => this.wasm.rvf_solver_policy_read(h, p),
     );
+    if (!raw) return null;
+    return {
+      contextStats: raw.context_stats ?? raw.contextStats ?? {},
+      earlyCommitPenalties: raw.early_commit_penalties ?? raw.earlyCommitPenalties ?? 0,
+      earlyCommitsTotal: raw.early_commits_total ?? raw.earlyCommitsTotal ?? 0,
+      earlyCommitsWrong: raw.early_commits_wrong ?? raw.earlyCommitsWrong ?? 0,
+      prepass: raw.prepass ?? '',
+      speculativeAttempts: raw.speculative_attempts ?? raw.speculativeAttempts ?? 0,
+      speculativeArm2Wins: raw.speculative_arm2_wins ?? raw.speculativeArm2Wins ?? 0,
+    };
   }
 
   /**

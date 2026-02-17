@@ -4,7 +4,7 @@
  * Loads the .wasm binary and re-exports all C-ABI functions plus the
  * WASM linear memory object.
  *
- * Works in Node.js (CJS/ESM) and browsers.
+ * Works in Node.js (CJS). For browser/ESM, pass WASM bytes directly.
  */
 
 var wasmInstance = null;
@@ -32,33 +32,22 @@ async function init(input) {
     wasmInstance = inst.exports;
     return wasmInstance;
   } else if (_isNode) {
-    // Node.js: always use readFile (fetch on file:// is unreliable)
-    var fs = await import('node:fs/promises');
-    var url = await import('node:url');
-    var path = await import('node:path');
+    var fs = require('node:fs');
+    var path = require('node:path');
     var wasmPath;
     if (typeof input === 'string') {
       wasmPath = input;
-    } else if (typeof __dirname !== 'undefined') {
-      // CJS context
-      wasmPath = path.default.join(__dirname, 'rvf_solver_bg.wasm');
     } else {
-      // ESM context — import.meta.url available
-      var thisDir = path.default.dirname(url.default.fileURLToPath(import.meta.url));
-      wasmPath = path.default.join(thisDir, 'rvf_solver_bg.wasm');
+      wasmPath = path.join(__dirname, 'rvf_solver_bg.wasm');
     }
-    wasmBytes = await fs.default.readFile(wasmPath);
+    wasmBytes = fs.readFileSync(wasmPath);
   } else {
-    // Browser: use fetch + instantiateStreaming
-    var wasmUrl = new URL('rvf_solver_bg.wasm', import.meta.url);
-    if (typeof WebAssembly.instantiateStreaming === 'function') {
-      var resp = await fetch(wasmUrl);
-      var result = await WebAssembly.instantiateStreaming(resp, {});
-      wasmInstance = result.instance.exports;
-      return wasmInstance;
-    }
-    var resp2 = await fetch(wasmUrl);
-    wasmBytes = await resp2.arrayBuffer();
+    // Browser: caller must provide bytes or Module
+    throw new Error(
+      '@ruvector/rvf-solver: In browser environments, pass WASM bytes or ' +
+      'a WebAssembly.Module to init(). Example: ' +
+      'init(await fetch("rvf_solver_bg.wasm").then(r => r.arrayBuffer()))'
+    );
   }
 
   var compiled = await WebAssembly.instantiate(wasmBytes, {});
@@ -66,7 +55,6 @@ async function init(input) {
   return wasmInstance;
 }
 
-// Support both ESM (export default) and CJS (module.exports)
+// CJS export
 init.default = init;
-if (typeof module !== 'undefined') module.exports = init;
-export default init;
+module.exports = init;

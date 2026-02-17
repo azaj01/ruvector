@@ -1,6 +1,6 @@
 {
   "name": "@ruvector/rvf-wasm",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "RuVector Format WASM microkernel for browser and edge vector operations",
   "main": "pkg/rvf_wasm.js",
   "types": "pkg/rvf_wasm.d.ts",
