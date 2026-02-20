@@ -66,7 +66,7 @@ solver.destroy();
 
 ### `RvfSolver.create(): Promise<RvfSolver>`
 
-Creates a new solver instance. Initializes the WASM module on the first call; subsequent calls reuse the loaded module. Up to 8 concurrent instances are supported.
+Creates a new solver instance. Initializes the WASM module on the first call; subsequent calls reuse the loaded module. Up to 7 concurrent instances are supported.
 
 ```typescript
 const solver = await RvfSolver.create();

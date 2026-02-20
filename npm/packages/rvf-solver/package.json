@@ -1,15 +1,14 @@
 {
   "name": "@ruvector/rvf-solver",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "RVF self-learning temporal solver — Thompson Sampling, PolicyKernel, ReasoningBank",
   "main": "dist/index.js",
-  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "files": ["dist/", "pkg/", "package.json"],
