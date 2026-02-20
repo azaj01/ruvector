@@ -7883,6 +7883,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-attn-mincut"
+version = "2.0.3"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "ruvector-bench"
 version = "2.0.3"
 dependencies = [
@@ -8038,6 +8047,14 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "ruvector-coherence"
+version = "2.0.3"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -8860,6 +8877,15 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "ruvector-profiler"
+version = "2.0.3"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
