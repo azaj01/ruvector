@@ -9488,6 +9488,7 @@ dependencies = [
  "ruvector-gnn 2.0.3",
  "ruvector-graph 2.0.3",
  "ruvector-math",
+ "ruvector-solver",
  "serde",
  "serde_json",
  "tempfile",
