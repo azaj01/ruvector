@@ -42,6 +42,13 @@ COPY crates/ruvector-postgres/ ./
 # Copy the ruvector-mincut-gated-transformer dependency (required for gated-transformer feature)
 COPY crates/ruvector-mincut-gated-transformer /build/../ruvector-mincut-gated-transformer/
 
+# Copy v0.3 dependencies
+COPY crates/ruvector-solver /build/../ruvector-solver/
+COPY crates/ruvector-math /build/../ruvector-math/
+COPY crates/ruvector-attention /build/../ruvector-attention/
+COPY crates/sona /build/../sona/
+COPY crates/ruvector-domain-expansion /build/../ruvector-domain-expansion/
+
 # Use the workspace Cargo.lock to pin dependencies and avoid registry parsing issues
 COPY Cargo.lock ./
 
@@ -55,8 +62,8 @@ RUN cargo fetch
 # This uses the git protocol instead of sparse which skips problematic index entries
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git
 
-# Build the extension with all features including embeddings and gated-transformer
-RUN cargo pgrx package --features "pg17 index-all quant-all embeddings gated-transformer"
+# Build the extension with all features including v0.3 modules
+RUN cargo pgrx package --features "pg17 index-all quant-all embeddings gated-transformer analytics-complete attention-extended"
 
 # Build the model downloader binary
 RUN cargo build --release --bin download-models --features "embeddings"
@@ -87,7 +94,7 @@ FROM postgres:17-bookworm
 # Labels
 LABEL maintainer="ruvector team"
 LABEL description="PostgreSQL with ruvector extension - high-performance vector similarity search with local embeddings"
-LABEL version="2.0.4"
+LABEL version="0.3.0"
 
 # Set embedding model cache path - models are pre-downloaded during build
 # FASTEMBED_CACHE_DIR is the correct env var for fastembed-rs
