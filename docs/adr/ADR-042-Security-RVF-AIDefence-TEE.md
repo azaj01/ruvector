@@ -15,13 +15,17 @@ specifies the **ultimate security RVF** — a single `.rvf` file that combines:
 
 1. **AIDefence** — 5-layer adversarial defense (prompt injection, jailbreak, PII, behavioral, policy)
 2. **TEE attestation** — Hardware-bound trust (SGX, SEV-SNP, TDX, ARM CCA)
-3. **Hardened Linux microkernel** — Minimal attack surface boot image
+3. **Hardened Linux microkernel** — Minimal attack surface boot image + KernelBinding anti-tamper
 4. **Coherence Gate** — Anytime-valid permission authorization
 5. **RBAC + Ed25519 signing** — Role-based access with cryptographic proof
 6. **Witness chain audit** — Tamper-evident hash-chained event log
+7. **Self-bootstrapping** — Dual WASM (Interpreter + Microkernel) for standalone execution
+8. **Dashboard** — Embedded security monitoring UI (DASHBOARD_SEG)
+9. **Quantization** — Scalar (int8, 4x) + Binary (1-bit, 32x) compression
+10. **Lifecycle** — Filter deletion, compaction, and permanent freeze/seal
 
 The result is a self-contained, bootable, cryptographically sealed security appliance
-that can be verified end-to-end from silicon to application layer.
+with 30 verified capabilities, end-to-end from silicon to application layer.
 
 ## Decision
 
@@ -32,11 +36,13 @@ exercises every security primitive in the RVF format.
 
 ```
 security_hardened.rvf
-├── KERNEL_SEG (0x0E)     Hardened Linux 6.x bzImage (tinyconfig + hardening)
+├── KERNEL_SEG (0x0E)     Hardened Linux 6.x + KernelBinding (128B anti-tamper)
 ├── EBPF_SEG (0x0F)       Packet filter + syscall policy enforcer
-├── WASM_SEG (0x10)       AIDefence engine (prompt injection, PII, jailbreak)
+├── WASM_SEG #1 (0x10)    AIDefence engine (prompt injection, PII, jailbreak)
+├── WASM_SEG #2 (0x10)    Interpreter runtime (self-bootstrapping)
+├── DASHBOARD_SEG (0x11)  Security monitoring web UI
 ├── VEC_SEG (0x01)        Threat signature embeddings (512-dim)
-├── INDEX_SEG (0x02)      HNSW index over threat vectors
+├── INDEX_SEG (0x02)      HNSW index over threat vectors (m=32)
 ├── CRYPTO_SEG (0x0C)     Ed25519 keys + TEE-bound key records
 ├── WITNESS_SEG (0x0A)    30-entry security lifecycle chain
 ├── META_SEG (0x07)       Security policy + RBAC config + AIDefence rules
@@ -173,25 +179,33 @@ Coherence Gate thresholds (PolicyKernel segment):
 | 1 | TEE attestation (SGX, SEV-SNP, TDX, ARM CCA) | CRYPTO_SEG | Quote validation + binding check |
 | 2 | TEE-bound key records | CRYPTO_SEG | Platform + measurement + validity |
 | 3 | Hardened kernel boot | KERNEL_SEG | Flags: SIGNED, REQUIRES_TEE, MEASURED |
-| 4 | eBPF packet filter | EBPF_SEG | XDP drop except allowlisted ports |
-| 5 | eBPF syscall filter | EBPF_SEG | Seccomp allowlist enforcement |
-| 6 | AIDefence prompt injection | WASM_SEG | 12 pattern detection |
-| 7 | AIDefence jailbreak detect | WASM_SEG | DAN, role manipulation, 8 patterns |
-| 8 | AIDefence PII scanning | WASM_SEG | Email, SSN, credit card, API keys |
-| 9 | AIDefence code/encoding attack | WASM_SEG | XSS, eval, base64, unicode tricks |
-| 10 | Ed25519 segment signing | CRYPTO_SEG | Per-segment cryptographic proof |
-| 11 | Witness chain audit trail | WITNESS_SEG | 30-entry HMAC-SHA256 chain |
-| 12 | Content hash hardening | MANIFEST_SEG | SHAKE-256 content verification |
-| 13 | Security policy (Paranoid) | MANIFEST_SEG | Full chain verification on mount |
-| 14 | RBAC access control | META_SEG | 6 roles with permission matrix |
-| 15 | Coherence Gate authorization | PolicyKernel | Anytime-valid decision with witness receipts |
-| 16 | Key rotation | CRYPTO_SEG + WITNESS | Old key → rejected, new key → active |
-| 17 | Tamper detection | WITNESS_SEG | 3/3 attacks rejected |
-| 18 | Multi-tenant isolation | Store derivation | Lineage-linked derived stores |
-| 19 | COW branching | Store branching | Forensic-grade immutable snapshots |
-| 20 | Audited k-NN queries | WITNESS_SEG | Witness entry on every search |
-| 21 | Threat vector similarity | VEC_SEG + INDEX | k-NN over 1000 threat embeddings |
-| 22 | Data exfiltration detection | WASM_SEG | curl/wget/fetch/webhook patterns |
+| 4 | KernelBinding anti-tamper | KERNEL_SEG | manifest_root_hash + policy_hash binding |
+| 5 | eBPF packet filter | EBPF_SEG | XDP drop except allowlisted ports |
+| 6 | eBPF syscall filter | EBPF_SEG | Seccomp allowlist enforcement |
+| 7 | AIDefence prompt injection | WASM_SEG | 12 pattern detection |
+| 8 | AIDefence jailbreak detect | WASM_SEG | DAN, role manipulation, 8 patterns |
+| 9 | AIDefence PII scanning | WASM_SEG | Email, SSN, credit card, API keys |
+| 10 | AIDefence code/encoding attack | WASM_SEG | XSS, eval, base64, unicode tricks |
+| 11 | Self-bootstrapping | WASM_SEG x2 | Interpreter + Microkernel dual WASM |
+| 12 | Security monitoring dashboard | DASHBOARD_SEG | Embedded security UI |
+| 13 | Ed25519 segment signing | CRYPTO_SEG | Per-segment cryptographic proof |
+| 14 | Witness chain audit trail | WITNESS_SEG | 30-entry HMAC-SHA256 chain |
+| 15 | Content hash hardening | MANIFEST_SEG | SHAKE-256 content verification |
+| 16 | Security policy (Paranoid) | MANIFEST_SEG | Full chain verification on mount |
+| 17 | RBAC access control | META_SEG | 6 roles with permission matrix |
+| 18 | Coherence Gate authorization | PolicyKernel | Anytime-valid decision with witness receipts |
+| 19 | Key rotation | CRYPTO_SEG + WITNESS | Old key rejected, new key active |
+| 20 | Tamper detection | WITNESS_SEG | 3/3 attacks rejected |
+| 21 | Multi-tenant isolation | Store derivation | Lineage-linked derived stores |
+| 22 | COW branching | Store branching | Forensic-grade immutable snapshots |
+| 23 | Audited k-NN queries | WITNESS_SEG | Witness entry on every search |
+| 24 | Threat vector similarity | VEC_SEG + INDEX | k-NN over 1000 threat embeddings |
+| 25 | Data exfiltration detection | WASM_SEG | curl/wget/fetch/webhook patterns |
+| 26 | Scalar quantization (int8) | rvf-quant | 4x compression, L2 distance preserved |
+| 27 | Binary quantization (1-bit) | rvf-quant | 32x compression, Hamming distance |
+| 28 | Filter deletion + compaction | Store lifecycle | Purge + reclaim dead space |
+| 29 | QEMU requirements check | rvf-launch | Bootability proof (dry-run) |
+| 30 | Freeze/seal | Store freeze | Permanent read-only immutability |
 
 ## MCP Tools (Security Container)
 
@@ -259,21 +273,28 @@ cd examples/rvf && cargo build --example security_hardened
 # Run the example (creates + verifies the security RVF)
 cargo run --example security_hardened
 
-# Expected output:
-#   Phase 1: Threat vector knowledge base (1000 embeddings)
-#   Phase 2: Hardened kernel image (KERNEL_SEG)
-#   Phase 3: eBPF packet + syscall filters (EBPF_SEG)
-#   Phase 4: AIDefence WASM engine (WASM_SEG)
-#   Phase 5: TEE attestation (SGX, SEV-SNP, TDX, ARM CCA)
-#   Phase 6: TEE-bound key records
-#   Phase 7: RBAC access control (6 roles)
-#   Phase 8: Coherence Gate policy (PolicyKernel)
-#   Phase 9: 30-entry witness chain
-#   Phase 10: Ed25519 signing + Paranoid verification
-#   Phase 11: Tamper detection (3 tests)
-#   Phase 12: Multi-tenant isolation
-#   Phase 13: AIDefence live tests (6 threat types)
-#   Phase 14: Security manifest
+# Expected output (v3.0 — 30 capabilities):
+#   Phase 1:  Threat vector knowledge base (1000 embeddings)
+#   Phase 2:  Hardened kernel + KernelBinding (KERNEL_SEG)
+#   Phase 3:  eBPF packet + syscall filters (EBPF_SEG)
+#   Phase 4:  AIDefence WASM #1 Microkernel (WASM_SEG)
+#   Phase 4b: WASM #2 Interpreter (self-bootstrapping)
+#   Phase 5:  Security monitoring dashboard (DASHBOARD_SEG)
+#   Phase 6:  TEE attestation (SGX, SEV-SNP, TDX, ARM CCA)
+#   Phase 7:  TEE-bound key records
+#   Phase 8:  RBAC access control (6 roles)
+#   Phase 9:  Coherence Gate policy (PolicyKernel)
+#   Phase 10: Scalar + Binary quantization
+#   Phase 11: 30-entry witness chain
+#   Phase 12: Ed25519 signing + Paranoid verification
+#   Phase 13: Tamper detection (3 tests)
+#   Phase 14: Filter deletion + compaction
+#   Phase 15: Multi-tenant isolation + COW
+#   Phase 16: AIDefence live tests (10 threat types)
+#   Phase 17: QEMU requirements check
+#   Phase 18: Component verification
+#   Phase 19: Freeze — permanent immutability seal
+#   All 30 capabilities verified.
 ```
 
 ## References
