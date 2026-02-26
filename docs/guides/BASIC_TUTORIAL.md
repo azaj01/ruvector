@@ -524,7 +524,7 @@ let results = db.search(&SearchQuery {
     filter: Some(json!({
         "timestamp": { "$gte": one_week_ago }
     })),
-    include_vectors: false,
+    ef_search: None,
 })?;
 
 // Return relevant documents
@@ -549,7 +549,7 @@ let recommendations = db.search(&SearchQuery {
     filter: Some(json!({
         "id": { "$nin": user_already_seen }
     })),
-    include_vectors: false,
+    ef_search: None,
 })?;
 ```
 
