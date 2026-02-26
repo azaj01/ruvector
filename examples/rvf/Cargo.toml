@@ -244,3 +244,7 @@ path = "examples/causal_atlas_dashboard.rs"
 [[example]]
 name = "security_hardened"
 path = "examples/security_hardened.rs"
+
+[[example]]
+name = "openfang"
+path = "examples/openfang.rs"
