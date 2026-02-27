@@ -18,7 +18,7 @@ npx ruvector
 
 #### **RuVector** is fundamentally different. It watches how you use it and gets smarter: search results improve automatically, the system tunes itself to your workload, and it runs AI models right on your hardware — no cloud APIs, no per-query bills, GPUs optional, CPUs preferred. It drops into PostgreSQL, runs in browsers, and ships as a single file. 
 
-pen source. ❤️ Free forever.
+Open source. ❤️ Free forever.
 
 ```
 User Query → [SONA Engine] → Model Response → User Feedback
