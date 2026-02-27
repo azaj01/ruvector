@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod converters;
+pub mod gaussian;
 pub mod indexing;
 pub mod pipeline;
 pub mod search;
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 // Re-exports
 pub use config::{BridgeConfig, DistanceMetric};
 pub use converters::ConversionError;
+pub use gaussian::{GaussianConfig, GaussianSplat, GaussianSplatCloud};
 pub use indexing::{IndexError, SpatialIndex};
 pub use pipeline::{PerceptionResult, PipelineConfig, PipelineStats};
 pub use search::{AlertSeverity, Neighbor, ObstacleAlert, SearchResult};

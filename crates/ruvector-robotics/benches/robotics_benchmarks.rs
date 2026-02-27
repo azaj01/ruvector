@@ -18,9 +18,15 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use std::collections::HashMap;
 
 use ruvector_robotics::bridge::{
-    Obstacle, Point3D, PointCloud, RobotState, SceneObject, SpatialIndex,
+    GaussianConfig, Obstacle, OccupancyGrid, Point3D, PointCloud, RobotState, SceneObject,
+    SpatialIndex,
 };
+use ruvector_robotics::bridge::gaussian::{gaussians_from_cloud, to_viewer_json};
 use ruvector_robotics::cognitive::behavior_tree::{BehaviorNode, BehaviorStatus, BehaviorTree};
+use ruvector_robotics::mcp::executor::ToolExecutor;
+use ruvector_robotics::mcp::ToolRequest;
+use ruvector_robotics::perception::sensor_fusion::{fuse_clouds, FusionConfig};
+use ruvector_robotics::planning::{astar, potential_field, PotentialFieldConfig};
 
 // ---------------------------------------------------------------------------
 // Data generators
@@ -875,6 +881,347 @@ fn bench_swarm_task_assignment(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// 11. Gaussian Splatting
+// ---------------------------------------------------------------------------
+
+fn bench_gaussian_splatting(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Gaussian_Splatting");
+
+    for n_points in [100, 1_000, 5_000, 20_000] {
+        group.throughput(Throughput::Elements(n_points as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("cloud_to_gaussians", n_points),
+            &n_points,
+            |b, &n| {
+                let points = generate_point_cloud(n);
+                let cloud = PointCloud::new(points, 1000);
+                let config = GaussianConfig::default();
+                b.iter(|| {
+                    let gs = gaussians_from_cloud(&cloud, &config);
+                    black_box(gs.len())
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("to_viewer_json", n_points),
+            &n_points,
+            |b, &n| {
+                let points = generate_point_cloud(n);
+                let cloud = PointCloud::new(points, 1000);
+                let gs = gaussians_from_cloud(&cloud, &GaussianConfig::default());
+                b.iter(|| {
+                    let json = to_viewer_json(&gs);
+                    black_box(json)
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("small_cell_high_resolution", n_points),
+            &n_points,
+            |b, &n| {
+                let points = generate_point_cloud(n);
+                let cloud = PointCloud::new(points, 1000);
+                let config = GaussianConfig {
+                    cell_size: 0.1,
+                    min_cluster_size: 1,
+                    ..Default::default()
+                };
+                b.iter(|| {
+                    let gs = gaussians_from_cloud(&cloud, &config);
+                    black_box(gs.len())
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// 12. A* Pathfinding
+// ---------------------------------------------------------------------------
+
+fn bench_astar_planning(c: &mut Criterion) {
+    let mut group = c.benchmark_group("AStar_Planning");
+
+    for grid_size in [20, 50, 100, 200] {
+        let cells = grid_size * grid_size;
+        group.throughput(Throughput::Elements(cells as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("free_grid_corner_to_corner", grid_size),
+            &grid_size,
+            |b, &sz| {
+                let grid = OccupancyGrid::new(sz, sz, 1.0);
+                b.iter(|| {
+                    let path = astar(&grid, (0, 0), (sz - 1, sz - 1)).unwrap();
+                    black_box(path.cells.len())
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("sparse_obstacles", grid_size),
+            &grid_size,
+            |b, &sz| {
+                let mut grid = OccupancyGrid::new(sz, sz, 1.0);
+                // Add walls at 1/4, 1/2, 3/4 with gaps.
+                for frac in [4, 2] {
+                    let wall_x = sz / frac;
+                    for y in 0..(sz * 3 / 4) {
+                        grid.set(wall_x, y, 1.0);
+                    }
+                }
+                b.iter(|| {
+                    let path = astar(&grid, (0, sz / 2), (sz - 1, sz / 2));
+                    black_box(path.map(|p| p.cells.len()).unwrap_or(0))
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// 13. Potential Field Planning
+// ---------------------------------------------------------------------------
+
+fn bench_potential_field_planning(c: &mut Criterion) {
+    let mut group = c.benchmark_group("PotentialField_Planning");
+
+    for n_obstacles in [0, 10, 50, 200, 1000] {
+        group.throughput(Throughput::Elements(n_obstacles as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("compute_velocity", n_obstacles),
+            &n_obstacles,
+            |b, &n| {
+                let robot = [0.0, 0.0, 0.0];
+                let goal = [10.0, 10.0, 0.0];
+                let obstacles: Vec<[f64; 3]> = (0..n)
+                    .map(|i| {
+                        let angle = (i as f64) * 2.0 * std::f64::consts::PI / (n.max(1) as f64);
+                        let r = 3.0 + (i as f64) * 0.02;
+                        [r * angle.cos(), r * angle.sin(), 0.0]
+                    })
+                    .collect();
+                let config = PotentialFieldConfig::default();
+
+                b.iter(|| {
+                    let cmd = potential_field(&robot, &goal, &obstacles, &config);
+                    black_box(cmd)
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// 14. Sensor Fusion
+// ---------------------------------------------------------------------------
+
+fn bench_sensor_fusion(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Sensor_Fusion");
+
+    for n_sensors in [2, 4, 8] {
+        let pts_per_sensor = 1000;
+        group.throughput(Throughput::Elements((n_sensors * pts_per_sensor) as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("fuse_no_downsample", n_sensors),
+            &n_sensors,
+            |b, &ns| {
+                let clouds: Vec<PointCloud> = (0..ns)
+                    .map(|s| {
+                        let points: Vec<Point3D> = (0..pts_per_sensor)
+                            .map(|i| {
+                                Point3D::new(
+                                    pseudo_random_f32(s as u64 * 100 + 1, i * 3) * 10.0,
+                                    pseudo_random_f32(s as u64 * 100 + 1, i * 3 + 1) * 10.0,
+                                    pseudo_random_f32(s as u64 * 100 + 1, i * 3 + 2) * 10.0,
+                                )
+                            })
+                            .collect();
+                        PointCloud::new(points, s as i64 * 100) // within 50ms window
+                    })
+                    .collect();
+                let config = FusionConfig::default();
+
+                b.iter(|| {
+                    let merged = fuse_clouds(&clouds, &config);
+                    black_box(merged.len())
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("fuse_with_voxel_downsample", n_sensors),
+            &n_sensors,
+            |b, &ns| {
+                let clouds: Vec<PointCloud> = (0..ns)
+                    .map(|s| {
+                        let points: Vec<Point3D> = (0..pts_per_sensor)
+                            .map(|i| {
+                                Point3D::new(
+                                    pseudo_random_f32(s as u64 * 200 + 1, i * 3) * 10.0,
+                                    pseudo_random_f32(s as u64 * 200 + 1, i * 3 + 1) * 10.0,
+                                    pseudo_random_f32(s as u64 * 200 + 1, i * 3 + 2) * 10.0,
+                                )
+                            })
+                            .collect();
+                        PointCloud::new(points, s as i64 * 100)
+                    })
+                    .collect();
+                let config = FusionConfig {
+                    voxel_size: 0.5,
+                    ..Default::default()
+                };
+
+                b.iter(|| {
+                    let merged = fuse_clouds(&clouds, &config);
+                    black_box(merged.len())
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("fuse_with_density_weighting", n_sensors),
+            &n_sensors,
+            |b, &ns| {
+                let clouds: Vec<PointCloud> = (0..ns)
+                    .map(|s| {
+                        let count = pts_per_sensor * (s + 1); // varied sizes
+                        let points: Vec<Point3D> = (0..count)
+                            .map(|i| {
+                                Point3D::new(
+                                    pseudo_random_f32(s as u64 * 300 + 1, i * 3) * 10.0,
+                                    pseudo_random_f32(s as u64 * 300 + 1, i * 3 + 1) * 10.0,
+                                    pseudo_random_f32(s as u64 * 300 + 1, i * 3 + 2) * 10.0,
+                                )
+                            })
+                            .collect();
+                        PointCloud::new(points, s as i64 * 100)
+                    })
+                    .collect();
+                let config = FusionConfig {
+                    density_weighting: true,
+                    ..Default::default()
+                };
+
+                b.iter(|| {
+                    let merged = fuse_clouds(&clouds, &config);
+                    black_box(merged.len())
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// 15. MCP Tool Execution
+// ---------------------------------------------------------------------------
+
+fn bench_mcp_tool_execution(c: &mut Criterion) {
+    let mut group = c.benchmark_group("MCP_ToolExecution");
+
+    // Benchmark predict_trajectory (lightweight)
+    group.bench_function("predict_trajectory_10steps", |b| {
+        let mut exec = ToolExecutor::new();
+        let args: HashMap<String, serde_json::Value> =
+            serde_json::from_value(serde_json::json!({
+                "position": [0.0, 0.0, 0.0],
+                "velocity": [1.0, 0.5, 0.0],
+                "steps": 10,
+                "dt": 0.1,
+            }))
+            .unwrap();
+        let req = ToolRequest {
+            tool_name: "predict_trajectory".to_string(),
+            arguments: args,
+        };
+
+        b.iter(|| {
+            let resp = exec.execute(&req);
+            black_box(resp)
+        })
+    });
+
+    // Benchmark spatial_search (after insertion)
+    for n_points in [100, 1_000, 10_000] {
+        group.throughput(Throughput::Elements(n_points as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("insert_then_search", n_points),
+            &n_points,
+            |b, &n| {
+                let mut exec = ToolExecutor::new();
+                let points = generate_point_cloud(n);
+                let points_json = serde_json::to_string(&points).unwrap();
+                let insert_args: HashMap<String, serde_json::Value> =
+                    serde_json::from_value(serde_json::json!({
+                        "points_json": points_json,
+                    }))
+                    .unwrap();
+                let insert_req = ToolRequest {
+                    tool_name: "insert_points".to_string(),
+                    arguments: insert_args,
+                };
+                exec.execute(&insert_req);
+
+                let search_args: HashMap<String, serde_json::Value> =
+                    serde_json::from_value(serde_json::json!({
+                        "query": [5.0, 5.0, 5.0],
+                        "k": 10,
+                    }))
+                    .unwrap();
+                let search_req = ToolRequest {
+                    tool_name: "spatial_search".to_string(),
+                    arguments: search_args,
+                };
+
+                b.iter(|| {
+                    let resp = exec.execute(&search_req);
+                    black_box(resp)
+                })
+            },
+        );
+    }
+
+    // Benchmark detect_obstacles
+    group.bench_function("detect_obstacles_500pts", |b| {
+        let mut exec = ToolExecutor::new();
+        let points = generate_point_cloud(500);
+        let cloud = PointCloud::new(points, 1000);
+        let cloud_json = serde_json::to_string(&cloud).unwrap();
+        let args: HashMap<String, serde_json::Value> =
+            serde_json::from_value(serde_json::json!({
+                "point_cloud_json": cloud_json,
+                "robot_position": [5.0, 5.0, 0.0],
+            }))
+            .unwrap();
+        let req = ToolRequest {
+            tool_name: "detect_obstacles".to_string(),
+            arguments: args,
+        };
+
+        b.iter(|| {
+            let resp = exec.execute(&req);
+            black_box(resp)
+        })
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion groups
 // ---------------------------------------------------------------------------
 
@@ -890,6 +1237,11 @@ criterion_group!(
     bench_memory_recall,
     bench_full_pipeline,
     bench_swarm_task_assignment,
+    bench_gaussian_splatting,
+    bench_astar_planning,
+    bench_potential_field_planning,
+    bench_sensor_fusion,
+    bench_mcp_tool_execution,
 );
 
 criterion_main!(benches);

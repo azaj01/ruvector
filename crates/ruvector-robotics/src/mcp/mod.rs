@@ -5,6 +5,8 @@
 //! definitions, categories, and JSON schema generation without pulling in an
 //! external MCP SDK.
 
+pub mod executor;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

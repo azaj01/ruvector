@@ -32,6 +32,7 @@ pub mod bridge;
 pub mod cognitive;
 pub mod mcp;
 pub mod perception;
+pub mod planning;
 
 /// Cross-domain transfer learning integration with `ruvector-domain-expansion`.
 ///
@@ -49,3 +50,4 @@ pub use cognitive::{BehaviorNode, BehaviorStatus, BehaviorTree, CognitiveCore, C
 pub use perception::{
     ObstacleDetector, PerceptionConfig, PerceptionPipeline, SceneGraphBuilder,
 };
+pub use planning::{GridPath, VelocityCommand};

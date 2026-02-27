@@ -7,6 +7,7 @@ pub mod clustering;
 pub mod config;
 pub mod obstacle_detector;
 pub mod scene_graph;
+pub mod sensor_fusion;
 
 pub use config::{ObstacleConfig, PerceptionConfig, SceneGraphConfig};
 pub use obstacle_detector::{ClassifiedObstacle, DetectedObstacle, ObstacleClass, ObstacleDetector};

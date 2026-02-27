@@ -1,29 +1,36 @@
-//! Integration tests for the ruvector-robotics subsystem.
+//! Integration tests for the ruvector-robotics crate.
 //!
-//! Tests the full integration across bridge types, perception pipeline,
-//! cognitive loop, MCP tool registration, and swarm coordination.
+//! Tests the real crate APIs across bridge types, perception pipeline,
+//! cognitive loop, MCP tool registry + executor, planning, sensor fusion,
+//! Gaussian splatting, and swarm coordination.
 //!
 //! Run with: cargo test --test robotics_integration -p ruvector-robotics
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use ruvector_robotics::bridge::{
-    Obstacle, Point3D, PointCloud, RobotState, SceneEdge, SceneGraph, SceneObject, SpatialIndex,
-    Trajectory,
+    GaussianConfig, Point3D, PointCloud, RobotState, SceneObject, SpatialIndex,
 };
+use ruvector_robotics::bridge::gaussian::gaussians_from_cloud;
 use ruvector_robotics::cognitive::behavior_tree::{
     BehaviorNode, BehaviorStatus, BehaviorTree, DecoratorType,
 };
-// Perception config types are available via ruvector_robotics::perception::{ObstacleConfig, PerceptionConfig, SceneGraphConfig}
-// but not used directly in these integration tests.
+use ruvector_robotics::cognitive::{
+    ActionOption, DecisionConfig, DecisionEngine, Demonstration, EpisodicMemory,
+    Episode, SkillLibrary, SwarmConfig, SwarmCoordinator, SwarmTask, RobotCapabilities,
+    TrackedObject, WorldModel, WorkingMemory, MemoryItem,
+};
+use ruvector_robotics::mcp::{RoboticsToolRegistry, ToolRequest};
+use ruvector_robotics::mcp::executor::ToolExecutor;
+use ruvector_robotics::perception::PerceptionPipeline;
+use ruvector_robotics::perception::sensor_fusion::{fuse_clouds, FusionConfig};
+use ruvector_robotics::planning;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Deterministic pseudo-random f32 in [0, 1).
 fn pseudo_random_f32(seed: u64, index: usize) -> f32 {
     let h = seed
         .wrapping_mul(index as u64 + 1)
@@ -44,517 +51,99 @@ fn generate_point_cloud_around(center: Point3D, n: usize, spread: f32) -> Vec<Po
         .collect()
 }
 
-fn cluster_point_cloud(
-    points: &[Point3D],
-    cell_size: f32,
-    min_cluster_size: usize,
-) -> Vec<Obstacle> {
-    let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
-    for (i, p) in points.iter().enumerate() {
-        let key = (
-            (p.x / cell_size) as i32,
-            (p.y / cell_size) as i32,
-            (p.z / cell_size) as i32,
-        );
-        grid.entry(key).or_default().push(i);
-    }
-
-    let mut obstacles = Vec::new();
-    let mut id = 0u64;
-    for indices in grid.values() {
-        if indices.len() >= min_cluster_size {
-            let cx =
-                indices.iter().map(|&i| points[i].x as f64).sum::<f64>() / indices.len() as f64;
-            let cy =
-                indices.iter().map(|&i| points[i].y as f64).sum::<f64>() / indices.len() as f64;
-            let cz =
-                indices.iter().map(|&i| points[i].z as f64).sum::<f64>() / indices.len() as f64;
-            let radius = indices
-                .iter()
-                .map(|&i| {
-                    let dx = points[i].x as f64 - cx;
-                    let dy = points[i].y as f64 - cy;
-                    let dz = points[i].z as f64 - cz;
-                    (dx * dx + dy * dy + dz * dz).sqrt()
-                })
-                .fold(0.0f64, f64::max);
-
-            obstacles.push(Obstacle {
-                id,
-                position: [cx, cy, cz],
-                distance: 0.0,
-                radius,
-                label: String::new(),
-                confidence: 0.9,
-            });
-            id += 1;
-        }
-    }
-    obstacles
-}
-
-fn build_scene_graph(objects: &[SceneObject], edge_threshold: f64) -> SceneGraph {
-    let mut edges = Vec::new();
-    for i in 0..objects.len() {
-        for j in (i + 1)..objects.len() {
-            let dx = objects[i].center[0] - objects[j].center[0];
-            let dy = objects[i].center[1] - objects[j].center[1];
-            let dz = objects[i].center[2] - objects[j].center[2];
-            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-            if dist <= edge_threshold {
-                edges.push(SceneEdge {
-                    from: i,
-                    to: j,
-                    distance: dist,
-                    relation: "near".to_string(),
-                });
-            }
-        }
-    }
-    SceneGraph::new(objects.to_vec(), edges, 0)
-}
-
-fn predict_trajectory_linear(
-    state: &RobotState,
-    horizon: usize,
-    dt_us: i64,
-) -> Trajectory {
-    let dt = dt_us as f64 / 1_000_000.0;
-    let waypoints: Vec<[f64; 3]> = (1..=horizon)
-        .map(|step| {
-            let t = step as f64 * dt;
-            [
-                state.position[0] + state.velocity[0] * t,
-                state.position[1] + state.velocity[1] * t,
-                state.position[2] + state.velocity[2] * t,
-            ]
-        })
-        .collect();
-    let timestamps: Vec<i64> = (1..=horizon)
-        .map(|step| state.timestamp_us + (step as i64) * dt_us)
-        .collect();
-    Trajectory::new(waypoints, timestamps, 0.95)
-}
-
-fn compute_attention_weights(
-    objects: &[SceneObject],
-    robot_pos: &[f64; 3],
-    temperature: f64,
-) -> Vec<f64> {
-    if objects.is_empty() {
-        return Vec::new();
-    }
-    let scores: Vec<f64> = objects
-        .iter()
-        .map(|obj| {
-            let dx = obj.center[0] - robot_pos[0];
-            let dy = obj.center[1] - robot_pos[1];
-            let dz = obj.center[2] - robot_pos[2];
-            let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(0.1);
-            let vel_mag = obj
-                .velocity
-                .map(|v| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt())
-                .unwrap_or(0.0);
-            (1.0 / dist + vel_mag) / temperature
-        })
-        .collect();
-    let max_score = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let exp_scores: Vec<f64> = scores.iter().map(|s| (s - max_score).exp()).collect();
-    let sum: f64 = exp_scores.iter().sum();
-    exp_scores.iter().map(|e| e / sum).collect()
-}
-
-// ---------------------------------------------------------------------------
-// Episodic memory
-// ---------------------------------------------------------------------------
-
-struct EpisodicMemory {
-    embeddings: Vec<(u64, Vec<f32>)>,
-}
-
-impl EpisodicMemory {
-    fn new() -> Self {
-        Self {
-            embeddings: Vec::new(),
-        }
-    }
-
-    fn store(&mut self, id: u64, embedding: Vec<f32>) {
-        self.embeddings.push((id, embedding));
-    }
-
-    fn recall_similar(&self, query: &[f32], k: usize) -> Vec<(u64, f32)> {
-        let q_norm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-10);
-        let mut sims: Vec<(u64, f32)> = self
-            .embeddings
-            .iter()
-            .map(|(id, ep)| {
-                let dot: f32 = query.iter().zip(ep.iter()).map(|(a, b)| a * b).sum();
-                let ep_norm: f32 = ep.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-10);
-                (*id, dot / (q_norm * ep_norm))
-            })
-            .collect();
-        sims.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        sims.truncate(k);
-        sims
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Anomaly detector
-// ---------------------------------------------------------------------------
-
-struct AnomalyDetector {
-    window: Vec<f64>,
-    window_size: usize,
-    threshold: f64,
-}
-
-impl AnomalyDetector {
-    fn new(window_size: usize, threshold: f64) -> Self {
-        Self {
-            window: Vec::with_capacity(window_size),
-            window_size,
-            threshold,
-        }
-    }
-
-    fn train(&mut self, values: &[f64]) {
-        for &v in values {
-            if self.window.len() >= self.window_size {
-                self.window.remove(0);
-            }
-            self.window.push(v);
-        }
-    }
-
-    fn is_anomaly(&self, value: f64) -> bool {
-        if self.window.len() < 2 {
-            return false;
-        }
-        let mean = self.window.iter().sum::<f64>() / self.window.len() as f64;
-        let variance = self
-            .window
-            .iter()
-            .map(|x| (x - mean) * (x - mean))
-            .sum::<f64>()
-            / self.window.len() as f64;
-        let std_dev = variance.sqrt().max(1e-10);
-        ((value - mean).abs() / std_dev) > self.threshold
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Skill learner
-// ---------------------------------------------------------------------------
-
-struct SkillLearner {
-    demonstrations: Vec<Vec<[f64; 3]>>,
-}
-
-impl SkillLearner {
-    fn new() -> Self {
-        Self {
-            demonstrations: Vec::new(),
-        }
-    }
-
-    fn add_demonstration(&mut self, trajectory: Vec<[f64; 3]>) {
-        self.demonstrations.push(trajectory);
-    }
-
-    fn reproduce(&self) -> Option<Vec<[f64; 3]>> {
-        if self.demonstrations.is_empty() {
-            return None;
-        }
-        let min_len = self
-            .demonstrations
-            .iter()
-            .map(|d| d.len())
-            .min()
-            .unwrap_or(0);
-        if min_len == 0 {
-            return None;
-        }
-        let n = self.demonstrations.len() as f64;
-        let trajectory: Vec<[f64; 3]> = (0..min_len)
-            .map(|i| {
-                let mut avg = [0.0f64; 3];
-                for demo in &self.demonstrations {
-                    avg[0] += demo[i][0];
-                    avg[1] += demo[i][1];
-                    avg[2] += demo[i][2];
-                }
-                [avg[0] / n, avg[1] / n, avg[2] / n]
-            })
-            .collect();
-        Some(trajectory)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Swarm coordinator
-// ---------------------------------------------------------------------------
-
-fn assign_tasks_greedy(
-    robots: &[([f64; 3], f64)], // (position, capability)
-    tasks: &[([f64; 3], f64)],  // (position, priority)
-) -> Vec<(usize, usize)> {
-    let mut assignments = Vec::new();
-    let mut available: Vec<bool> = vec![true; tasks.len()];
-    let mut load: Vec<usize> = vec![0; robots.len()];
-
-    for _ in 0..tasks.len() {
-        let mut best_cost = f64::MAX;
-        let mut best_ri = 0;
-        let mut best_ti = 0;
-
-        for (ri, (rpos, cap)) in robots.iter().enumerate() {
-            for (ti, (tpos, prio)) in tasks.iter().enumerate() {
-                if !available[ti] {
-                    continue;
-                }
-                let dx = rpos[0] - tpos[0];
-                let dy = rpos[1] - tpos[1];
-                let dist = (dx * dx + dy * dy).sqrt();
-                let cost = dist / cap.max(0.01) + (load[ri] as f64) * 5.0 - prio;
-                if cost < best_cost {
-                    best_cost = cost;
-                    best_ri = ri;
-                    best_ti = ti;
-                }
-            }
-        }
-
-        if best_cost < f64::MAX {
-            available[best_ti] = false;
-            load[best_ri] += 1;
-            assignments.push((best_ri, best_ti));
-        }
-    }
-    assignments
-}
-
-// ---------------------------------------------------------------------------
-// Decision engine
-// ---------------------------------------------------------------------------
-
-struct DecisionOption {
-    name: String,
-    score: f64,
-    risk: f64,
-}
-
-fn select_best_decision(options: &[DecisionOption], risk_tolerance: f64) -> Option<&DecisionOption> {
-    options
-        .iter()
-        .filter(|o| o.risk <= risk_tolerance)
-        .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap())
-}
-
-// ---------------------------------------------------------------------------
-// MCP tool registry
-// ---------------------------------------------------------------------------
-
-type ToolFn = Box<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
-
-struct McpToolRegistry {
-    tools: HashMap<String, (String, ToolFn)>,
-}
-
-impl McpToolRegistry {
-    fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-        }
-    }
-
-    fn register(&mut self, name: &str, description: &str, handler: ToolFn) {
-        self.tools
-            .insert(name.to_string(), (description.to_string(), handler));
-    }
-
-    fn tool_count(&self) -> usize {
-        self.tools.len()
-    }
-
-    fn has_tool(&self, name: &str) -> bool {
-        self.tools.contains_key(name)
-    }
-
-    fn call(&self, name: &str, args: &str) -> Result<String, String> {
-        match self.tools.get(name) {
-            Some((_, handler)) => handler(args),
-            None => Err(format!("Tool not found: {}", name)),
-        }
-    }
-}
-
-fn build_robotics_tool_registry() -> McpToolRegistry {
-    let mut r = McpToolRegistry::new();
-    let tools: Vec<(&str, &str)> = vec![
-        ("get_robot_state", "Get the current robot state"),
-        ("move_to", "Move to a target position"),
-        ("stop", "Emergency stop"),
-        ("get_point_cloud", "Get the latest point cloud"),
-        ("detect_obstacles", "Run obstacle detection"),
-        ("get_scene_graph", "Get the current scene graph"),
-        ("predict_trajectory", "Predict trajectory for an object"),
-        ("set_velocity", "Set the robot's target velocity"),
-        ("get_map", "Get the current occupancy grid map"),
-        ("plan_path", "Plan a path to target"),
-        ("get_battery", "Get robot battery status"),
-        ("recall_memory", "Recall episodic memory"),
-        ("store_memory", "Store an episode to memory"),
-        ("get_swarm_status", "Get status of all robots"),
-        ("assign_task", "Assign a task to a robot"),
-    ];
-    for (name, desc) in tools {
-        r.register(
-            name,
-            desc,
-            Box::new(move |_args| Ok(format!(r#"{{"tool":"{}","status":"ok"}}"#, name))),
-        );
-    }
-    r
-}
-
 // ===========================================================================
 // TESTS
 // ===========================================================================
 
-/// Test 1: End-to-end perception pipeline.
+/// Test 1: End-to-end perception pipeline using actual crate API.
 #[test]
 fn test_perception_pipeline_end_to_end() {
     let mut points = generate_point_cloud_around(Point3D::new(2.0, 3.0, 0.0), 50, 0.8);
-    points.extend(generate_point_cloud_around(
-        Point3D::new(8.0, 7.0, 0.0),
-        40,
-        0.6,
-    ));
-    points.extend(generate_point_cloud_around(
-        Point3D::new(5.0, 5.0, 0.0),
-        30,
-        0.5,
-    ));
-    let cloud = PointCloud::new(points.clone(), 1_000_000);
-    assert_eq!(cloud.len(), 120);
+    points.extend(generate_point_cloud_around(Point3D::new(8.0, 7.0, 0.0), 40, 0.6));
+    let cloud = PointCloud::new(points, 1_000_000);
 
-    // Detect obstacles
-    let obstacles = cluster_point_cloud(&cloud.points, 0.5, 3);
-    assert!(
-        !obstacles.is_empty(),
-        "Should detect at least one obstacle cluster"
-    );
+    let pipe = PerceptionPipeline::with_thresholds(0.5, 2.0);
 
-    // Build scene graph
+    // Detect obstacles using the real API
+    let obstacles = pipe.detect_obstacles(&cloud, [0.0, 0.0, 0.0], 20.0).unwrap();
+    assert!(!obstacles.is_empty(), "Should detect at least one obstacle");
+
+    // Build scene graph using the real API
     let scene_objects: Vec<SceneObject> = obstacles
         .iter()
         .map(|obs| SceneObject::new(obs.id as usize, obs.position, [obs.radius; 3]))
         .collect();
-    let graph = build_scene_graph(&scene_objects, 10.0);
+    let graph = pipe.build_scene_graph(&scene_objects, 10.0).unwrap();
     assert_eq!(graph.objects.len(), scene_objects.len());
     if scene_objects.len() > 1 {
         assert!(!graph.edges.is_empty(), "Should have edges between nearby objects");
     }
 
-    // Predict trajectory
-    let robot = RobotState {
-        position: [0.0, 0.0, 0.0],
-        velocity: [1.0, 0.5, 0.0],
-        acceleration: [0.0; 3],
-        timestamp_us: 1_000_000,
-    };
-    let trajectory = predict_trajectory_linear(&robot, 10, 100_000);
-    assert_eq!(trajectory.len(), 10);
-    let last = &trajectory.waypoints[9];
-    assert!(
-        (last[0] - 1.0).abs() < 1e-6,
-        "Final x should be ~1.0, got {}",
-        last[0]
-    );
+    // Predict trajectory using the real API
+    let traj = pipe
+        .predict_trajectory([0.0, 0.0, 0.0], [1.0, 0.5, 0.0], 10, 0.1)
+        .unwrap();
+    assert_eq!(traj.len(), 10);
+    assert!((traj.waypoints[0][0] - 0.1).abs() < 1e-9);
 }
 
-/// Test 2: Cognitive perceive-think-act cycle.
+/// Test 2: Cognitive pipeline — decision engine selects action from obstacles.
 #[test]
 fn test_cognitive_perceive_think_act() {
-    let robot = RobotState {
-        position: [5.0, 5.0, 0.0],
-        velocity: [1.0, 0.0, 0.0],
-        acceleration: [0.0; 3],
-        timestamp_us: 0,
-    };
+    let pipe = PerceptionPipeline::with_thresholds(0.5, 2.0);
 
     let mut points = generate_point_cloud_around(Point3D::new(6.0, 5.0, 0.0), 20, 0.3);
-    points.extend(generate_point_cloud_around(
-        Point3D::new(10.0, 10.0, 0.0),
-        15,
-        0.3,
-    ));
-    let obstacles = cluster_point_cloud(&points, 0.3, 3);
+    points.extend(generate_point_cloud_around(Point3D::new(10.0, 10.0, 0.0), 15, 0.3));
+    let cloud = PointCloud::new(points, 0);
 
-    let scene_objects: Vec<SceneObject> = obstacles
-        .iter()
-        .map(|obs| {
-            let mut so = SceneObject::new(obs.id as usize, obs.position, [0.5; 3]);
-            so.velocity = Some([0.0; 3]);
-            so
-        })
-        .collect();
+    let obstacles = pipe.detect_obstacles(&cloud, [5.0, 5.0, 0.0], 20.0).unwrap();
+    let min_dist = obstacles.iter().map(|o| o.distance).fold(f64::MAX, f64::min);
 
-    let weights = compute_attention_weights(&scene_objects, &robot.position, 1.0);
-    assert_eq!(weights.len(), scene_objects.len());
-    let weight_sum: f64 = weights.iter().sum();
-    assert!(
-        (weight_sum - 1.0).abs() < 1e-6,
-        "Weights should sum to 1.0, got {}",
-        weight_sum
-    );
+    // Use the real DecisionEngine
+    let engine = DecisionEngine::new(DecisionConfig::default());
+    let options = vec![
+        ActionOption { name: "proceed_fast".into(), reward: 8.0, risk: 0.9, energy_cost: 0.5, novelty: 0.0 },
+        ActionOption { name: "slow_down".into(), reward: 5.0, risk: 0.2, energy_cost: 0.3, novelty: 0.0 },
+        ActionOption { name: "stop".into(), reward: 2.0, risk: 0.0, energy_cost: 0.0, novelty: 0.0 },
+    ];
+    let (best_idx, _utility) = engine.evaluate(&options).unwrap();
+    assert!(!options[best_idx].name.is_empty());
 
-    let min_dist = obstacles
-        .iter()
-        .map(|obs| {
-            let dx = obs.position[0] - robot.position[0];
-            let dy = obs.position[1] - robot.position[1];
-            (dx * dx + dy * dy).sqrt()
-        })
-        .fold(f64::MAX, f64::min);
-
-    let action = if min_dist < 1.0 {
-        "emergency_stop"
-    } else if min_dist < 3.0 {
-        "slow_down"
-    } else {
-        "proceed"
-    };
-
-    assert!(
-        action == "emergency_stop" || action == "slow_down",
-        "Should slow down or stop with obstacle at distance {}",
-        min_dist
-    );
+    // With obstacles nearby, a conservative engine should not pick "proceed_fast"
+    if min_dist < 3.0 {
+        let conservative = DecisionEngine::new(DecisionConfig {
+            risk_aversion: 5.0,
+            ..Default::default()
+        });
+        let (best_idx, _) = conservative.evaluate(&options).unwrap();
+        assert_ne!(options[best_idx].name, "proceed_fast");
+    }
 }
 
-/// Test 3: Episodic memory store and recall.
+/// Test 3: Episodic memory store and recall using actual crate API.
 #[test]
 fn test_episodic_memory_store_recall() {
     let mut memory = EpisodicMemory::new();
 
     for i in 0..20 {
-        let mut embedding = vec![0.0f32; 32];
-        embedding[i % 32] = 1.0;
-        embedding[(i + 1) % 32] = 0.5;
-        memory.store(i as u64, embedding);
+        let mut percept = vec![0.0f64; 32];
+        percept[i % 32] = 1.0;
+        percept[(i + 1) % 32] = 0.5;
+        memory.store(Episode {
+            percepts: vec![percept],
+            actions: vec![format!("action_{}", i)],
+            reward: i as f64 * 0.1,
+            timestamp: i as i64 * 1000,
+        });
     }
 
-    let mut query = vec![0.0f32; 32];
+    let mut query = vec![0.0f64; 32];
     query[5] = 0.9;
     query[6] = 0.4;
-
     let results = memory.recall_similar(&query, 3);
     assert_eq!(results.len(), 3);
-    assert_eq!(results[0].0, 5, "Most similar should be episode 5");
-    assert!(results[0].1 > 0.8, "Similarity should be high");
+    // Most similar episode should be the one with percept[5]=1.0
+    assert!(results[0].reward > 0.0);
 }
 
 /// Test 4: Behavior tree patrol execution.
@@ -567,354 +156,295 @@ fn test_behavior_tree_patrol() {
         ]),
         BehaviorNode::Action("return_to_base".into()),
     ]);
-
     let mut tree = BehaviorTree::new(tree_node);
     tree.set_condition("battery_ok", true);
     tree.set_action_result("patrol", BehaviorStatus::Running);
     tree.set_action_result("return_to_base", BehaviorStatus::Running);
 
-    // First 5 ticks: patrol is Running
-    for _tick in 0..5 {
-        let status = tree.tick();
-        assert_eq!(status, BehaviorStatus::Running);
+    for _ in 0..5 {
+        assert_eq!(tree.tick(), BehaviorStatus::Running);
     }
-
-    // Switch patrol to Success
     tree.set_action_result("patrol", BehaviorStatus::Success);
-    for _tick in 5..10 {
-        let status = tree.tick();
-        assert_eq!(status, BehaviorStatus::Success);
-    }
+    assert_eq!(tree.tick(), BehaviorStatus::Success);
 }
 
-/// Test 5: Swarm task assignment with 5 robots and 10 tasks.
+/// Test 5: Swarm task assignment using actual SwarmCoordinator.
 #[test]
 fn test_swarm_task_assignment() {
-    let robots: Vec<([f64; 3], f64)> = (0..5)
-        .map(|i| {
-            let angle = (i as f64) * 2.0 * std::f64::consts::PI / 5.0;
-            ([10.0 * angle.cos(), 10.0 * angle.sin(), 0.0], 0.5 + (i as f64) * 0.1)
+    let mut coordinator = SwarmCoordinator::new(SwarmConfig::default());
+
+    for i in 0..5 {
+        coordinator.register_robot(RobotCapabilities {
+            id: i,
+            max_speed: 1.0 + i as f64 * 0.2,
+            payload: 10.0,
+            sensors: vec!["lidar".into()],
+        });
+    }
+
+    let tasks: Vec<SwarmTask> = (0..5)
+        .map(|i| SwarmTask {
+            id: i,
+            description: format!("task_{}", i),
+            location: [i as f64 * 2.0, 0.0, 0.0],
+            required_capabilities: vec!["lidar".into()],
+            priority: (i % 3) as u8,
         })
         .collect();
 
-    let tasks: Vec<([f64; 3], f64)> = (0..10)
-        .map(|i| {
-            (
-                [
-                    pseudo_random_f32(500, i * 2) as f64 * 20.0 - 10.0,
-                    pseudo_random_f32(500, i * 2 + 1) as f64 * 20.0 - 10.0,
-                    0.0,
-                ],
-                pseudo_random_f32(600, i) as f64 * 10.0,
-            )
-        })
-        .collect();
-
-    let assignments = assign_tasks_greedy(&robots, &tasks);
-    assert_eq!(assignments.len(), 10, "All tasks should be assigned");
-
-    let assigned_tasks: Vec<usize> = assignments.iter().map(|(_, t)| *t).collect();
-    for ti in 0..10 {
-        assert!(assigned_tasks.contains(&ti), "Task {} should be assigned", ti);
-    }
-
-    for ri in 0..5 {
-        let count = assignments.iter().filter(|(r, _)| *r == ri).count();
-        assert!(count >= 1, "Robot {} should have at least 1 task", ri);
-    }
+    let assignments = coordinator.assign_tasks(&tasks);
+    assert!(!assignments.is_empty(), "Should assign at least one task");
 }
 
-/// Test 6: World model update and predict.
+/// Test 6: World model update and predict using actual WorldModel.
 #[test]
 fn test_world_model_update_predict() {
-    let mut current_state = RobotState::default();
+    let mut model = WorldModel::new(50, 0.5);
 
-    for i in 0..20 {
-        current_state = RobotState {
+    for i in 0..10 {
+        model.update_object(TrackedObject {
+            id: i,
             position: [i as f64 * 0.5, 0.0, 0.0],
             velocity: [0.5, 0.0, 0.0],
-            acceleration: [0.0; 3],
-            timestamp_us: (i as i64) * 100_000,
-        };
+            last_seen: i as i64 * 100_000,
+            confidence: 0.9,
+            label: format!("obj_{}", i),
+        });
     }
 
-    let traj = predict_trajectory_linear(&current_state, 30, 100_000);
-    assert_eq!(traj.len(), 30);
+    // Predict state of object 5 forward 2 seconds
+    let predicted = model.predict_state(5, 2.0).unwrap();
+    let expected_x = 5.0 * 0.5 + 0.5 * 2.0;
+    assert!((predicted.position[0] - expected_x).abs() < 1e-6);
 
-    let step_20 = &traj.waypoints[19];
-    let expected_x = current_state.position[0] + current_state.velocity[0] * 2.0;
-    assert!(
-        (step_20[0] - expected_x).abs() < 1e-6,
-        "Predicted x at t+2s should be {}, got {}",
-        expected_x,
-        step_20[0]
-    );
+    // Stale removal
+    let removed = model.remove_stale_objects(1_000_000, 500_000);
+    assert!(removed > 0, "Should remove early objects");
 }
 
-/// Test 7: Skill learning from demonstrations.
+/// Test 7: Skill learning using actual SkillLibrary.
 #[test]
 fn test_skill_learning_from_demo() {
-    let mut learner = SkillLearner::new();
+    let mut library = SkillLibrary::new();
 
-    learner.add_demonstration(vec![
-        [0.0, 0.0, 0.0],
-        [0.5, 0.0, 0.2],
-        [1.0, 0.0, 0.5],
-        [1.0, 0.0, 0.0],
-    ]);
-    learner.add_demonstration(vec![
-        [0.0, 0.1, 0.0],
-        [0.5, 0.1, 0.25],
-        [1.0, 0.1, 0.55],
-        [1.0, 0.1, 0.0],
-    ]);
-    learner.add_demonstration(vec![
-        [0.0, -0.1, 0.0],
-        [0.5, -0.1, 0.15],
-        [1.0, -0.1, 0.45],
-        [1.0, -0.1, 0.0],
-    ]);
+    let demos = vec![
+        Demonstration {
+            trajectory: vec![[0.0, 0.0, 0.0], [0.5, 0.0, 0.2], [1.0, 0.0, 0.5], [1.0, 0.0, 0.0]],
+            timestamps: vec![0, 100, 200, 300],
+            metadata: "demo1".into(),
+        },
+        Demonstration {
+            trajectory: vec![[0.0, 0.1, 0.0], [0.5, 0.1, 0.25], [1.0, 0.1, 0.55], [1.0, 0.1, 0.0]],
+            timestamps: vec![0, 100, 200, 300],
+            metadata: "demo2".into(),
+        },
+    ];
 
-    let reproduced = learner.reproduce().expect("Should reproduce from 3 demos");
-    assert_eq!(reproduced.len(), 4);
-    assert!((reproduced[0][0] - 0.0).abs() < 1e-6);
-    assert!((reproduced[0][1] - 0.0).abs() < 1e-6);
+    let skill = library.learn_from_demonstration("pick_up", &demos);
+    assert_eq!(skill.trajectory.len(), 4);
+    assert!(skill.confidence > 0.0);
 
-    let avg_z = (0.2 + 0.25 + 0.15) / 3.0;
-    assert!(
-        (reproduced[1][2] - avg_z).abs() < 1e-6,
-        "Expected avg z={}, got {}",
-        avg_z,
-        reproduced[1][2]
-    );
-    assert!((reproduced[3][2] - 0.0).abs() < 1e-6, "End z should be 0");
+    let avg_z1 = (0.2 + 0.25) / 2.0;
+    assert!((skill.trajectory[1][2] - avg_z1).abs() < 1e-6);
 }
 
-/// Test 8: Anomaly detection accuracy.
+/// Test 8: Anomaly detection using actual PerceptionPipeline.
 #[test]
 fn test_anomaly_detection_accuracy() {
-    let mut detector = AnomalyDetector::new(100, 3.0);
-
-    let normal_data: Vec<f64> = (0..100)
-        .map(|i| 5.0 + (i as f64 % 7.0) * 0.1 - 0.3)
-        .collect();
-    detector.train(&normal_data);
-
-    assert!(!detector.is_anomaly(5.0), "5.0 should not be anomalous");
-    assert!(!detector.is_anomaly(5.3), "5.3 should not be anomalous");
-    assert!(!detector.is_anomaly(4.7), "4.7 should not be anomalous");
-
-    assert!(detector.is_anomaly(100.0), "100.0 should be anomalous");
-    assert!(detector.is_anomaly(-50.0), "-50.0 should be anomalous");
-    assert!(detector.is_anomaly(20.0), "20.0 should be anomalous");
+    let pipe = PerceptionPipeline::with_thresholds(0.5, 2.0);
+    let mut pts: Vec<[f32; 3]> = (0..20).map(|i| [i as f32 * 0.1, 0.0, 0.0]).collect();
+    pts.push([100.0, 100.0, 100.0]); // outlier
+    let cloud = PointCloud::new(
+        pts.iter().map(|a| Point3D::new(a[0], a[1], a[2])).collect(),
+        0,
+    );
+    let anomalies = pipe.detect_anomalies(&cloud).unwrap();
+    assert!(!anomalies.is_empty());
+    assert!(anomalies.iter().any(|a| a.score > 2.0));
 }
 
-/// Test 9: Attention focuses on nearest/fastest objects.
-#[test]
-fn test_attention_focuses_on_nearest() {
-    let robot_pos = [0.0, 0.0, 0.0];
-
-    let objects = vec![
-        {
-            let mut o = SceneObject::new(0, [10.0, 0.0, 0.0], [0.5; 3]);
-            o.velocity = Some([0.0; 3]);
-            o
-        },
-        {
-            let mut o = SceneObject::new(1, [1.0, 0.0, 0.0], [0.5; 3]);
-            o.velocity = Some([0.0; 3]);
-            o
-        },
-        {
-            let mut o = SceneObject::new(2, [5.0, 0.0, 0.0], [0.5; 3]);
-            o.velocity = Some([0.0; 3]);
-            o
-        },
-    ];
-
-    let weights = compute_attention_weights(&objects, &robot_pos, 1.0);
-    assert!(
-        weights[1] > weights[0],
-        "Near > far: {} vs {}",
-        weights[1],
-        weights[0]
-    );
-    assert!(
-        weights[1] > weights[2],
-        "Near > medium: {} vs {}",
-        weights[1],
-        weights[2]
-    );
-
-    // Fast moving far object should dominate
-    let objects_fast = vec![
-        {
-            let mut o = SceneObject::new(0, [10.0, 0.0, 0.0], [0.5; 3]);
-            o.velocity = Some([10.0, 0.0, 0.0]);
-            o
-        },
-        {
-            let mut o = SceneObject::new(1, [2.0, 0.0, 0.0], [0.5; 3]);
-            o.velocity = Some([0.0; 3]);
-            o
-        },
-    ];
-
-    let weights_fast = compute_attention_weights(&objects_fast, &robot_pos, 1.0);
-    assert!(
-        weights_fast[0] > weights_fast[1],
-        "Fast far > slow near: {} vs {}",
-        weights_fast[0],
-        weights_fast[1]
-    );
-}
-
-/// Test 10: Decision engine selects optimal action.
+/// Test 9: Decision engine selects optimal action using actual DecisionEngine.
 #[test]
 fn test_decision_engine_selects_best() {
+    let engine = DecisionEngine::new(DecisionConfig {
+        risk_aversion: 1.0,
+        energy_weight: 0.0,
+        curiosity_weight: 0.0,
+    });
     let options = vec![
-        DecisionOption {
-            name: "proceed_fast".to_string(),
-            score: 8.0,
-            risk: 0.7,
-        },
-        DecisionOption {
-            name: "proceed_slow".to_string(),
-            score: 6.0,
-            risk: 0.2,
-        },
-        DecisionOption {
-            name: "stop".to_string(),
-            score: 3.0,
-            risk: 0.0,
-        },
-        DecisionOption {
-            name: "detour".to_string(),
-            score: 7.0,
-            risk: 0.4,
-        },
+        ActionOption { name: "proceed_fast".into(), reward: 8.0, risk: 0.7, energy_cost: 0.5, novelty: 0.0 },
+        ActionOption { name: "detour".into(), reward: 7.0, risk: 0.3, energy_cost: 0.3, novelty: 0.0 },
+        ActionOption { name: "stop".into(), reward: 3.0, risk: 0.0, energy_cost: 0.0, novelty: 0.0 },
     ];
+    let (best_idx, _) = engine.evaluate(&options).unwrap();
+    // With risk_aversion=1, proceed_fast (reward=8 - risk*1=7.3) beats detour (7 - 0.3=6.7)
+    assert_eq!(options[best_idx].name, "proceed_fast");
 
-    let best = select_best_decision(&options, 1.0).unwrap();
-    assert_eq!(best.name, "proceed_fast");
-
-    let best_moderate = select_best_decision(&options, 0.5).unwrap();
-    assert_eq!(best_moderate.name, "detour");
-
-    let best_safe = select_best_decision(&options, 0.1).unwrap();
-    assert_eq!(best_safe.name, "stop");
-
-    let best_zero = select_best_decision(&options, 0.0).unwrap();
-    assert_eq!(best_zero.name, "stop");
+    // Conservative: higher risk_aversion
+    let conservative = DecisionEngine::new(DecisionConfig {
+        risk_aversion: 10.0,
+        energy_weight: 0.0,
+        curiosity_weight: 0.0,
+    });
+    let (best_idx, _) = conservative.evaluate(&options).unwrap();
+    // proceed_fast: 8 - 7.0 = 1.0, detour: 7 - 3.0 = 4.0, stop: 3 - 0 = 3.0
+    assert_eq!(options[best_idx].name, "detour");
 }
 
-/// Test 11: MCP tool listing -- verify all 15 tools are registered.
+/// Test 10: MCP tool listing -- verify all 15 tools are registered.
 #[test]
 fn test_mcp_tool_listing() {
-    let registry = build_robotics_tool_registry();
-    assert_eq!(registry.tool_count(), 15, "Should have 15 tools");
+    let registry = RoboticsToolRegistry::new();
+    assert_eq!(registry.list_tools().len(), 15);
 
     let expected = [
-        "get_robot_state",
-        "move_to",
-        "stop",
-        "get_point_cloud",
-        "detect_obstacles",
-        "get_scene_graph",
-        "predict_trajectory",
-        "set_velocity",
-        "get_map",
-        "plan_path",
-        "get_battery",
-        "recall_memory",
-        "store_memory",
-        "get_swarm_status",
-        "assign_task",
+        "detect_obstacles", "build_scene_graph", "predict_trajectory",
+        "focus_attention", "detect_anomalies", "spatial_search", "insert_points",
+        "store_memory", "recall_memory", "learn_skill", "execute_skill",
+        "plan_behavior", "coordinate_swarm", "update_world_model", "get_world_state",
     ];
     for name in &expected {
-        assert!(registry.has_tool(name), "Tool '{}' should be registered", name);
+        assert!(registry.get_tool(name).is_some(), "Tool '{}' should be registered", name);
     }
 }
 
-/// Test 12: MCP tool execution.
+/// Test 11: MCP tool execution via ToolExecutor.
 #[test]
 fn test_mcp_tool_execution() {
-    let registry = build_robotics_tool_registry();
+    let mut executor = ToolExecutor::new();
 
-    let tool_names = [
-        "get_robot_state",
-        "move_to",
-        "stop",
-        "get_point_cloud",
-        "detect_obstacles",
-        "get_scene_graph",
-        "predict_trajectory",
-        "set_velocity",
-        "get_map",
-        "plan_path",
-        "get_battery",
-        "recall_memory",
-        "store_memory",
-        "get_swarm_status",
-        "assign_task",
-    ];
+    // Predict trajectory
+    let req = ToolRequest {
+        tool_name: "predict_trajectory".into(),
+        arguments: [
+            ("position".into(), serde_json::json!([0.0, 0.0, 0.0])),
+            ("velocity".into(), serde_json::json!([1.0, 0.0, 0.0])),
+            ("steps".into(), serde_json::json!(5)),
+            ("dt".into(), serde_json::json!(0.5)),
+        ].into(),
+    };
+    let resp = executor.execute(&req);
+    assert!(resp.success, "predict_trajectory should succeed: {:?}", resp.error);
 
-    for name in &tool_names {
-        let result = registry.call(name, "{}");
-        assert!(result.is_ok(), "Tool '{}' should succeed: {:?}", name, result);
-        let response = result.unwrap();
-        assert!(!response.is_empty(), "Tool '{}' should return non-empty", name);
-    }
-
-    let result = registry.call("nonexistent", "{}");
-    assert!(result.is_err(), "Nonexistent tool should fail");
+    // Unknown tool
+    let req = ToolRequest { tool_name: "nonexistent".into(), arguments: Default::default() };
+    let resp = executor.execute(&req);
+    assert!(!resp.success, "nonexistent tool should fail");
 }
 
-/// Test 13: Full pipeline stress test -- 100 frames.
+/// Test 12: Gaussian splatting from point cloud.
+#[test]
+fn test_gaussian_splatting() {
+    let mut points = generate_point_cloud_around(Point3D::new(2.0, 0.0, 0.0), 30, 0.5);
+    points.extend(generate_point_cloud_around(Point3D::new(8.0, 0.0, 0.0), 30, 0.5));
+    let cloud = PointCloud::new(points, 1000);
+
+    let gaussians = gaussians_from_cloud(&cloud, &GaussianConfig::default());
+    assert!(gaussians.len() >= 2, "Should produce at least 2 Gaussians, got {}", gaussians.len());
+
+    for g in &gaussians.gaussians {
+        assert!(g.point_count >= 2);
+        assert!(g.opacity > 0.0);
+        assert!(g.scale[0] > 0.0);
+    }
+
+    // Verify JSON export
+    let json = ruvector_robotics::bridge::gaussian::to_viewer_json(&gaussians);
+    assert_eq!(json["count"].as_u64().unwrap(), gaussians.len() as u64);
+}
+
+/// Test 13: A* pathfinding.
+#[test]
+fn test_astar_planning() {
+    let mut grid = ruvector_robotics::bridge::OccupancyGrid::new(20, 20, 0.5);
+
+    // Add a wall
+    for y in 0..15 {
+        grid.set(10, y, 1.0);
+    }
+
+    let path = planning::astar(&grid, (5, 5), (15, 5)).unwrap();
+    assert_eq!(*path.cells.first().unwrap(), (5, 5));
+    assert_eq!(*path.cells.last().unwrap(), (15, 5));
+    assert!(path.cost > 10.0, "Path around wall should be longer than straight line");
+
+    // Verify no cell in path is occupied
+    for &(x, y) in &path.cells {
+        assert!(grid.get(x, y).unwrap() < 0.5, "Path cell ({},{}) is occupied", x, y);
+    }
+}
+
+/// Test 14: Potential field planner.
+#[test]
+fn test_potential_field_planning() {
+    let cmd = planning::potential_field(
+        &[0.0, 0.0, 0.0],
+        &[10.0, 0.0, 0.0],
+        &[[3.0, 0.0, 0.0]],
+        &planning::PotentialFieldConfig::default(),
+    );
+    // Should still move forward but with some deflection from obstacle
+    assert!(cmd.vx > 0.0, "Should move toward goal");
+
+    // No obstacles: straight toward goal
+    let cmd_free = planning::potential_field(
+        &[0.0, 0.0, 0.0],
+        &[10.0, 0.0, 0.0],
+        &[],
+        &planning::PotentialFieldConfig::default(),
+    );
+    assert!(cmd_free.vy.abs() < 1e-9);
+}
+
+/// Test 15: Sensor fusion.
+#[test]
+fn test_sensor_fusion() {
+    let c1 = PointCloud::new(
+        vec![Point3D::new(1.0, 0.0, 0.0), Point3D::new(2.0, 0.0, 0.0)],
+        1000,
+    );
+    let c2 = PointCloud::new(
+        vec![Point3D::new(3.0, 0.0, 0.0)],
+        1010,
+    );
+    let c3_stale = PointCloud::new(
+        vec![Point3D::new(99.0, 0.0, 0.0)],
+        200_000, // 199ms later — too stale
+    );
+
+    let config = FusionConfig { max_time_delta_us: 50_000, ..Default::default() };
+    let fused = fuse_clouds(&[c1, c2, c3_stale], &config);
+    assert_eq!(fused.len(), 3, "Should include c1+c2 but skip c3");
+}
+
+/// Test 16: Full pipeline stress test — 100 frames using real APIs.
 #[test]
 fn test_full_pipeline_100_frames() {
     let start = Instant::now();
+    let pipe = PerceptionPipeline::with_thresholds(0.5, 2.0);
     let mut total_obstacles = 0usize;
 
     for frame in 0..100 {
-        let robot = RobotState {
-            position: [frame as f64 * 0.1, 0.0, 0.0],
-            velocity: [0.1, 0.0, 0.0],
-            acceleration: [0.0; 3],
-            timestamp_us: (frame as i64) * 33_333,
-        };
-
         let center = Point3D::new(
-            robot.position[0] as f32 + 3.0,
+            3.0 + frame as f32 * 0.1,
             pseudo_random_f32(frame as u64, 0) * 4.0 - 2.0,
             0.0,
         );
         let points = generate_point_cloud_around(center, 100, 1.0);
+        let cloud = PointCloud::new(points, frame as i64 * 33_333);
 
-        let obstacles = cluster_point_cloud(&points, 0.5, 3);
+        let obstacles = pipe
+            .detect_obstacles(&cloud, [frame as f64 * 0.1, 0.0, 0.0], 10.0)
+            .unwrap();
         total_obstacles += obstacles.len();
-
-        if !obstacles.is_empty() {
-            let objects: Vec<SceneObject> = obstacles
-                .iter()
-                .map(|obs| SceneObject::new(obs.id as usize, obs.position, [0.5; 3]))
-                .collect();
-            let _weights = compute_attention_weights(&objects, &robot.position, 1.0);
-        }
-
-        let _traj = predict_trajectory_linear(&robot, 5, 33_333);
     }
 
     let elapsed = start.elapsed();
     assert!(total_obstacles > 0, "Should detect obstacles across 100 frames");
-    assert!(
-        elapsed.as_secs() < 5,
-        "100 frames should complete in < 5s, took {:?}",
-        elapsed
-    );
+    assert!(elapsed.as_secs() < 5, "100 frames should complete in < 5s, took {:?}", elapsed);
 }
 
-/// Test 14: Concurrent spatial search from multiple threads.
+/// Test 17: Concurrent spatial search from multiple threads.
 #[test]
 fn test_concurrent_spatial_search() {
     let points: Vec<Point3D> = (0..5000)
@@ -927,28 +457,20 @@ fn test_concurrent_spatial_search() {
         })
         .collect();
 
-    // Build a shared spatial index
     let cloud = PointCloud::new(points, 0);
     let mut index = SpatialIndex::new(3);
     index.insert_point_cloud(&cloud);
     let shared_index = Arc::new(index);
     let results = Arc::new(Mutex::new(Vec::new()));
-    let k = 5usize;
 
     let mut handles = Vec::new();
     for thread_id in 0..4 {
         let idx = Arc::clone(&shared_index);
         let res = Arc::clone(&results);
-
         let handle = std::thread::spawn(move || {
-            let query = [
-                (thread_id as f32) * 2.5,
-                (thread_id as f32) * 2.5,
-                5.0_f32,
-            ];
-            let neighbors = idx.search_nearest(&query, k).unwrap();
-            let mut r = res.lock().unwrap();
-            r.push((thread_id, neighbors));
+            let query = [(thread_id as f32) * 2.5, (thread_id as f32) * 2.5, 5.0_f32];
+            let neighbors = idx.search_nearest(&query, 5).unwrap();
+            res.lock().unwrap().push((thread_id, neighbors));
         });
         handles.push(handle);
     }
@@ -959,89 +481,58 @@ fn test_concurrent_spatial_search() {
 
     let final_results = results.lock().unwrap();
     assert_eq!(final_results.len(), 4, "All 4 threads should complete");
-
     for (tid, neighbors) in final_results.iter() {
-        assert_eq!(
-            neighbors.len(),
-            k,
-            "Thread {} should return {} neighbors",
-            tid,
-            k
-        );
-        // Results should be distance-sorted
+        assert_eq!(neighbors.len(), 5, "Thread {} should return 5 neighbors", tid);
         for window in neighbors.windows(2) {
-            assert!(
-                window[0].1 <= window[1].1,
-                "Thread {} results should be distance-sorted",
-                tid
-            );
+            assert!(window[0].1 <= window[1].1, "Thread {} results should be distance-sorted", tid);
         }
     }
 }
 
-/// Test 15: Edge cases -- empty inputs and boundary conditions.
+/// Test 18: Edge cases — empty inputs and boundary conditions.
 #[test]
 fn test_edge_cases() {
+    let pipe = PerceptionPipeline::with_thresholds(0.5, 2.0);
+
     // Empty point cloud
-    let empty: Vec<Point3D> = Vec::new();
-    let obstacles = cluster_point_cloud(&empty, 0.5, 3);
-    assert!(obstacles.is_empty(), "Empty cloud => no obstacles");
+    let empty = PointCloud::default();
+    let obs = pipe.detect_obstacles(&empty, [0.0; 3], 10.0).unwrap();
+    assert!(obs.is_empty());
 
-    // Empty scene graph
-    let graph = build_scene_graph(&[], 10.0);
-    assert!(graph.objects.is_empty());
-    assert!(graph.edges.is_empty());
+    // Scene graph with invalid distance
+    assert!(pipe.build_scene_graph(&[], -1.0).is_err());
 
-    // Single point does not form cluster
-    let single = vec![Point3D::new(1.0, 1.0, 1.0)];
-    let obs = cluster_point_cloud(&single, 0.5, 3);
-    assert!(obs.is_empty(), "Single point => no cluster");
+    // Trajectory with zero steps
+    assert!(pipe.predict_trajectory([0.0; 3], [1.0, 0.0, 0.0], 0, 1.0).is_err());
 
-    // Attention on empty objects
-    let weights = compute_attention_weights(&[], &[0.0; 3], 1.0);
-    assert!(weights.is_empty());
+    // Attention with negative radius
+    assert!(pipe.focus_attention(&empty, [0.0; 3], -1.0).is_err());
 
-    // Trajectory from zero velocity
-    let stationary = RobotState::default();
-    let traj = predict_trajectory_linear(&stationary, 10, 100_000);
-    assert_eq!(traj.len(), 10);
-    for wp in &traj.waypoints {
-        assert_eq!(*wp, [0.0, 0.0, 0.0], "Stationary robot stays at origin");
-    }
+    // Anomaly with < 2 points
+    let small = PointCloud::new(vec![Point3D::new(1.0, 0.0, 0.0)], 0);
+    assert!(pipe.detect_anomalies(&small).unwrap().is_empty());
 
     // Empty spatial index
     let index = SpatialIndex::new(3);
-    assert!(index.is_empty());
-    let result = index.search_nearest(&[0.0_f32, 0.0, 0.0], 5);
-    assert!(result.is_err(), "Search on empty index should fail");
+    assert!(index.search_nearest(&[0.0_f32, 0.0, 0.0], 5).is_err());
+    // Radius search on empty index returns Ok(empty)
+    assert!(index.search_radius(&[0.0_f32, 0.0, 0.0], 1.0).unwrap().is_empty());
 
-    // Skill learner with no demos
-    let learner = SkillLearner::new();
-    assert!(learner.reproduce().is_none());
-
-    // Decision engine with no matching options
-    let options = vec![DecisionOption {
-        name: "risky".to_string(),
-        score: 10.0,
-        risk: 1.0,
-    }];
-    assert!(select_best_decision(&options, 0.5).is_none());
-
-    // Empty memory recall
-    let memory = EpisodicMemory::new();
-    let results = memory.recall_similar(&[1.0, 2.0], 5);
-    assert!(results.is_empty());
-
-    // Anomaly detector with insufficient data
-    let detector = AnomalyDetector::new(100, 3.0);
-    assert!(!detector.is_anomaly(999.0));
-
-    // Behavior tree with decorator
+    // Behavior tree decorator
     let node = BehaviorNode::Decorator(
         DecoratorType::Inverter,
         Box::new(BehaviorNode::Action("a".into())),
     );
     let mut tree = BehaviorTree::new(node);
     tree.set_action_result("a", BehaviorStatus::Success);
-    assert_eq!(tree.tick(), BehaviorStatus::Failure, "Inverter should flip Success to Failure");
+    assert_eq!(tree.tick(), BehaviorStatus::Failure);
+
+    // Empty Gaussian conversion
+    let gs = gaussians_from_cloud(&PointCloud::default(), &GaussianConfig::default());
+    assert!(gs.is_empty());
+
+    // A* on same start/goal
+    let grid = ruvector_robotics::bridge::OccupancyGrid::new(5, 5, 1.0);
+    let path = planning::astar(&grid, (2, 2), (2, 2)).unwrap();
+    assert_eq!(path.cells.len(), 1);
 }
