@@ -158,7 +158,7 @@ impl CognitiveCore {
         let best = self
             .percept_buffer
             .iter()
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())?;
+            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal))?;
 
         let action_type = if best.data.len() >= 3 {
             ActionType::Move([best.data[0], best.data[1], best.data[2]])

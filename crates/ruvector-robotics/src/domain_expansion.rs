@@ -328,7 +328,7 @@ impl RoboticsDomain {
         let start = spec.start.unwrap_or([0.0; 3]);
         let goal = spec.goal.unwrap_or([10.0, 10.0, 0.0]);
         let start_dist = dist3(&sol.waypoints[0], &start);
-        let goal_dist = dist3(sol.waypoints.last().unwrap(), &goal);
+        let goal_dist = sol.waypoints.last().map_or(f64::MAX, |wp| dist3(wp, &goal));
         let reaches_goal = start_dist < 1.0 && goal_dist < 1.0;
 
         // Check collisions.

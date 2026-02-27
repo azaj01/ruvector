@@ -67,19 +67,10 @@ impl Default for ObstacleConfig {
 // ---------------------------------------------------------------------------
 
 /// Aggregated configuration for the full perception pipeline.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PerceptionConfig {
     pub scene_graph: SceneGraphConfig,
     pub obstacle: ObstacleConfig,
-}
-
-impl Default for PerceptionConfig {
-    fn default() -> Self {
-        Self {
-            scene_graph: SceneGraphConfig::default(),
-            obstacle: ObstacleConfig::default(),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

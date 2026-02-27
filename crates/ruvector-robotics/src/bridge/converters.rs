@@ -141,9 +141,12 @@ pub fn occupancy_grid_to_vectors(grid: &OccupancyGrid) -> Vec<Vec<f32>> {
 ///
 /// Each node vector is `[cx, cy, cz, ex, ey, ez, confidence]`.
 /// Each edge tuple is `(from_index, to_index, distance)`.
+type NodeFeatures = Vec<Vec<f64>>;
+type EdgeList = Vec<(usize, usize, f64)>;
+
 pub fn scene_graph_to_adjacency(
     scene: &SceneGraph,
-) -> (Vec<Vec<f64>>, Vec<(usize, usize, f64)>) {
+) -> (NodeFeatures, EdgeList) {
     let nodes: Vec<Vec<f64>> = scene
         .objects
         .iter()

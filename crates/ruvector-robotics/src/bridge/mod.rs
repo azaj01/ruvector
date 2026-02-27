@@ -105,25 +105,13 @@ impl Default for Pose {
 }
 
 /// A collection of 3D points from a sensor (LiDAR, depth camera, etc.).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PointCloud {
     pub points: Vec<Point3D>,
     pub intensities: Vec<f32>,
     pub normals: Option<Vec<Point3D>>,
     pub timestamp_us: i64,
     pub frame_id: String,
-}
-
-impl Default for PointCloud {
-    fn default() -> Self {
-        Self {
-            points: Vec::new(),
-            intensities: Vec::new(),
-            normals: None,
-            timestamp_us: 0,
-            frame_id: String::new(),
-        }
-    }
 }
 
 impl PointCloud {
@@ -172,23 +160,12 @@ impl Default for RobotState {
 }
 
 /// A synchronised bundle of sensor observations captured at one instant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SensorFrame {
     pub cloud: Option<PointCloud>,
     pub state: Option<RobotState>,
     pub pose: Option<Pose>,
     pub timestamp_us: i64,
-}
-
-impl Default for SensorFrame {
-    fn default() -> Self {
-        Self {
-            cloud: None,
-            state: None,
-            pose: None,
-            timestamp_us: 0,
-        }
-    }
 }
 
 /// A 2-D occupancy grid map.
@@ -203,11 +180,12 @@ pub struct OccupancyGrid {
 
 impl OccupancyGrid {
     pub fn new(width: usize, height: usize, resolution: f64) -> Self {
+        let size = width.checked_mul(height).expect("grid size overflow");
         Self {
             width,
             height,
             resolution,
-            data: vec![0.0; width * height],
+            data: vec![0.0; size],
             origin: [0.0; 3],
         }
     }
@@ -263,21 +241,11 @@ pub struct SceneEdge {
 }
 
 /// A scene graph representing spatial relationships between objects.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SceneGraph {
     pub objects: Vec<SceneObject>,
     pub edges: Vec<SceneEdge>,
     pub timestamp: i64,
-}
-
-impl Default for SceneGraph {
-    fn default() -> Self {
-        Self {
-            objects: Vec::new(),
-            edges: Vec::new(),
-            timestamp: 0,
-        }
-    }
 }
 
 impl SceneGraph {

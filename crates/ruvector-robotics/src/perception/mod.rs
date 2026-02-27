@@ -273,8 +273,7 @@ impl PerceptionPipeline {
             }
 
             let confidence = (cluster.len() as f32 / cloud.points.len() as f32)
-                .min(1.0)
-                .max(0.1);
+                .clamp(0.1, 1.0);
 
             obstacles.push(Obstacle {
                 id: next_id,

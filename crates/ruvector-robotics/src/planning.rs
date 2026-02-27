@@ -125,7 +125,7 @@ pub fn astar(
 
 #[inline]
 fn cell_free(grid: &OccupancyGrid, (x, y): Cell) -> bool {
-    grid.get(x, y).map_or(false, |v| v < OCCUPIED_THRESHOLD)
+    grid.get(x, y).is_some_and(|v| v < OCCUPIED_THRESHOLD)
 }
 
 #[inline]

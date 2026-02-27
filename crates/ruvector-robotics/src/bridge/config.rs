@@ -3,17 +3,12 @@
 use serde::{Deserialize, Serialize};
 
 /// Distance metric used for spatial search operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DistanceMetric {
+    #[default]
     Euclidean,
     Cosine,
     Manhattan,
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::Euclidean
-    }
 }
 
 /// Top-level configuration for the robotics bridge.
