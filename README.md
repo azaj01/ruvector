@@ -204,52 +204,52 @@ RuVector isn't a database you add to your stack — it's the entire stack. Self-
 
 | | Layer | Replaces | What It Does |
 |---|-------|----------|--------------|
-| 🔄 | **Self-Learning** | Manual retraining, MLOps | SONA adapts in <1 ms — LoRA fine-tuning + EWC++ memory on every request |
-| ⚡ | **Self-Optimizing** | Manual tuning, config files | Auto-tunes routing, ranking, compression, and index parameters |
-| 🎯 | **Embeddings** | OpenAI API, Cohere, static models | Contrastive training, triplet loss, real-time fine-tuning — embeddings improve as you use them |
-| ✅ | **Verified Training** | Manual validation | Formal proofs + statistical tests on every training step — gradients only apply if invariants pass |
+| 🔄 | [**Self-Learning**](./crates/sona/README.md) | Manual retraining, MLOps | SONA adapts in <1 ms — LoRA fine-tuning + EWC++ memory on every request |
+| ⚡ | [**Self-Optimizing**](./crates/ruvector-gnn/README.md) | Manual tuning, config files | Auto-tunes routing, ranking, compression, and index parameters |
+| 🎯 | [**Embeddings**](./crates/ruvllm/README.md) | OpenAI API, Cohere, static models | Contrastive training, triplet loss, real-time fine-tuning — embeddings improve as you use them |
+| ✅ | [**Verified Training**](./crates/ruvector-verified/README.md) | Manual validation | Formal proofs + statistical tests on every training step — gradients only apply if invariants pass |
 
 **Data & Search**
 
 | | Layer | Replaces | What It Does |
 |---|-------|----------|--------------|
-| 🔍 | **Search** | Pinecone, Weaviate, Qdrant | Self-learning HNSW — GNN improves results from every query |
-| 🗄️ | **Storage** | Separate database + cache | Vector store, graph DB, key-value cache — unified engine |
-| 🐘 | **PostgreSQL** | pgvector, pg_embedding | Drop-in replacement — 230+ SQL functions, same interface but search gets smarter over time |
-| 🔗 | **Graph** | Neo4j, Amazon Neptune | Cypher, W3C SPARQL 1.1, hyperedges — all built in |
+| 🔍 | [**Search**](./crates/ruvector-core/README.md) | Pinecone, Weaviate, Qdrant | Self-learning HNSW — GNN improves results from every query |
+| 🗄️ | [**Storage**](./crates/ruvector-core/README.md) | Separate database + cache | Vector store, graph DB, key-value cache — unified engine |
+| 🐘 | [**PostgreSQL**](./crates/ruvector-postgres/README.md) | pgvector, pg_embedding | Drop-in replacement — 230+ SQL functions, same interface but search gets smarter over time |
+| 🔗 | [**Graph**](./crates/ruvector-graph/README.md) | Neo4j, Amazon Neptune | Cypher, W3C SPARQL 1.1, hyperedges — all built in |
 
 **AI & ML**
 
 | | Layer | Replaces | What It Does |
 |---|-------|----------|--------------|
-| 🤖 | **AI Runtime** | llama.cpp, vLLM, Ollama | ruvllm — GGUF models, MicroLoRA (<1 ms), speculative decoding, continuous batching, WASM |
-| 🧠 | **ML Framework** | PyTorch, TensorFlow | 46 attention types, 8 graph transformers, spiking networks, sparse inference, sublinear solvers |
-| 🔬 | **Coherence** | Manual testing, guardrails | Min-cut finds the weakest links in any network — detects AI drift, prunes wasted compute (50% reduction), keeps agents in sync |
-| 🧬 | **Domain Models** | Custom ML pipelines | Genomics (DNA variant calling), physics simulation, economic modeling, biological networks |
+| 🤖 | [**AI Runtime**](./crates/ruvllm/README.md) | llama.cpp, vLLM, Ollama | ruvllm — GGUF models, MicroLoRA (<1 ms), speculative decoding, continuous batching, WASM |
+| 🧠 | [**ML Framework**](./crates/ruvector-attention/README.md) | PyTorch, TensorFlow | 46 attention types, 8 graph transformers, spiking networks, sparse inference, sublinear solvers |
+| 🔬 | [**Coherence**](./crates/ruvector-mincut/README.md) | Manual testing, guardrails | Min-cut finds the weakest links in any network — detects AI drift, prunes wasted compute (50% reduction), keeps agents in sync |
+| 🧬 | [**Domain Models**](./crates/ruvector-domain-expansion/README.md) | Custom ML pipelines | Genomics (DNA variant calling), physics simulation, economic modeling, biological networks |
 
 **Infrastructure**
 
 | | Layer | Replaces | What It Does |
 |---|-------|----------|--------------|
-| 🔧 | **Hardware** | CUDA toolkit, driver configs | Sparse/spiking CPU (AVX-512, NEON) — GPU for bursts (Metal, CUDA, ANE, WebGPU, FPGA) |
-| 🐧 | **Kernel** | Linux + Docker + eBPF | `.rvf` file boots its own kernel in 125 ms — eBPF accelerates hot paths |
-| 🌐 | **Coordination** | etcd, ZooKeeper, Consul | Raft consensus, multi-master replication, CRDT delta sync, auto-sharding |
-| 📦 | **Packaging** | Docker, Kubernetes | One `.rvf` file = your entire service — servers, browsers, phones, IoT, bare metal |
+| 🔧 | [**Hardware**](./crates/ruvector-fpga-transformer/README.md) | CUDA toolkit, driver configs | Sparse/spiking CPU (AVX-512, NEON) — GPU for bursts (Metal, CUDA, ANE, WebGPU, FPGA) |
+| 🐧 | [**Kernel**](./crates/rvf/README.md) | Linux + Docker + eBPF | `.rvf` file boots its own kernel in 125 ms — eBPF accelerates hot paths |
+| 🌐 | [**Coordination**](./crates/ruvector-raft/README.md) | etcd, ZooKeeper, Consul | Raft consensus, multi-master replication, CRDT delta sync, auto-sharding |
+| 📦 | [**Packaging**](./crates/rvf/README.md) | Docker, Kubernetes | One `.rvf` file = your entire service — servers, browsers, phones, IoT, bare metal |
 
 **Routing & Observability**
 
 | | Layer | Replaces | What It Does |
 |---|-------|----------|--------------|
-| 🚦 | **Routing** | API gateways, LLM routers | Semantic routing (Tiny Dancer), MCP protocol gateway, agent-to-agent discovery |
-| 📊 | **Observability** | Datadog, Prometheus | Latency/power/memory profiling, coherence scoring, real-time metrics |
-| 🛡️ | **Safety** | Manual review, guardrails | Cognitum Gate — 256-tile WASM fabric, Permit/Defer/Deny in <1 ms, witness receipts |
+| 🚦 | [**Routing**](./crates/ruvector-tiny-dancer-core/README.md) | API gateways, LLM routers | Semantic routing (Tiny Dancer), MCP protocol gateway, agent-to-agent discovery |
+| 📊 | [**Observability**](./crates/ruvector-profiler/README.md) | Datadog, Prometheus | Latency/power/memory profiling, coherence scoring, real-time metrics |
+| 🛡️ | [**Safety**](./crates/cognitum-gate-tilezero/README.md) | Manual review, guardrails | Cognitum Gate — 256-tile WASM fabric, Permit/Defer/Deny in <1 ms, witness receipts |
 
 **Security & Trust**
 
 | | Layer | Replaces | What It Does |
 |---|-------|----------|--------------|
-| 🔐 | **Crypto** | Vault, manual audit logs | Post-quantum (ML-DSA-65, Ed25519), SHAKE-256, witness chains, hardware attestation |
-| 📜 | **Lineage** | No equivalent | Every operation recorded in a tamper-proof chain — full provenance from creation to deployment |
+| 🔐 | [**Crypto**](./crates/rvf/rvf-crypto/README.md) | Vault, manual audit logs | Post-quantum (ML-DSA-65, Ed25519), SHAKE-256, witness chains, hardware attestation |
+| 📜 | [**Lineage**](./crates/rvf/rvf-crypto/README.md) | No equivalent | Every operation recorded in a tamper-proof chain — full provenance from creation to deployment |
 
 The [RVF cognitive container](./crates/rvf/README.md) ties it all together: a single file that packages your vectors, models, data, and a bootable kernel. Drop it on any machine and it starts serving in 125 ms — no install, no dependencies. It branches like Git (only changes are copied), logs every operation in a tamper-proof chain, and runs anywhere from a browser to bare metal.
 
