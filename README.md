@@ -180,6 +180,12 @@ User Query → [SONA Engine] → Model Response → User Feedback
 
 </details>
 
+### Built by rUv — Powering Cognitum
+
+RuVector is created by [rUv](https://ruv.io) and is the core intelligence layer behind [Cognitum](https://cognitum.one) — the world's first agentic processing unit and **CES 2026 Innovation Awards Honoree**. Cognitum embeds RuVector's self-learning HNSW search, spiking neural networks, WASM micro-agents, and coherence gates directly into purpose-built hardware: 7 compute tiles running always-on agents at ~5 uW per inference with sub-millisecond response times and less than 15W total power.
+
+Where traditional edge devices run static models and burn watts continuously, Cognitum uses RuVector's event-driven architecture to stay aware without staying busy — reacting only when reality demands it. The same software stack that powers the Cognitum v0 hardware appliance is available here as open-source Rust crates, WASM modules, and npm packages. Everything in this repo runs on your existing hardware today.
+
 ### A Complete AI Operating System
 
 RuVector isn't a database you add to your stack — it's the entire stack. Self-learning, self-optimizing, and self-deploying. Everything an AI application needs to run, from bare metal hardware up to the application layer, in one package:
