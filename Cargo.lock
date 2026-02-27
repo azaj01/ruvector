@@ -9022,6 +9022,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-robotics"
+version = "0.1.0"
+dependencies = [
+ "criterion 0.5.1",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "ruvector-robotics-examples"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.5",
+ "ruvector-robotics",
+ "serde_json",
+]
+
+[[package]]
 name = "ruvector-router-cli"
 version = "2.0.5"
 dependencies = [

@@ -1,0 +1,20 @@
+[package]
+name = "ruvector-robotics"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Cognitive robotics platform: bridge types, perception pipeline, cognitive architecture, and MCP tools"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+rand = "0.8"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "robotics_benchmarks"
+harness = false

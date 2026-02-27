@@ -111,6 +111,8 @@ members = [
     "crates/ruvector-graph-transformer-node",
     "examples/rvf-kernel-optimized",
     "examples/verified-applications",
+    "crates/ruvector-robotics",
+    "examples/robotics",
 ]
 resolver = "2"
 
