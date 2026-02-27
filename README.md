@@ -18,7 +18,7 @@ npx ruvector
 
 #### **RuVector** is fundamentally different. It watches how you use it and gets smarter: search results improve automatically, the system tunes itself to your workload, and it runs AI models right on your hardware — no cloud APIs, no per-query bills, GPUs optional, CPUs preferred. It drops into PostgreSQL, runs in browsers, and ships as a single file. 
 
-❤️ Open source. Free forever.
+pen source. ❤️ Free forever.
 
 ```
 User Query → [SONA Engine] → Model Response → User Feedback
@@ -175,9 +175,25 @@ User Query → [SONA Engine] → Model Response → User Feedback
 
 </details>
 
-*Think of it as: **Pinecone** (vector search) + **Neo4j** (graph queries) + **PyTorch** (neural networks) + **llama.cpp** (local AI models) + **PostgreSQL** (SQL database) + **etcd** (distributed coordination) + **Docker** (packaging and deployment) — combined into one Rust package.*
+### A Complete AI Operating System
 
-*The [RVF cognitive container](./crates/rvf/README.md) is the Docker part: a single `.rvf` file that packages your vectors, models, and data together. Drop it on any machine and it boots into a running service in 125 ms — no install, no dependencies. It branches like Git (only changes are copied), logs every operation in a tamper-proof chain, and runs anywhere from a browser to bare metal.*
+RuVector isn't a database you add to your stack — it's the entire stack. Everything an AI application needs to run, from bare metal hardware up to the application layer, in one package:
+
+| Layer | What RuVector Replaces | What It Does |
+|-------|----------------------|--------------|
+| **Hardware** | CUDA toolkit, driver configs | Talks directly to your GPU, Neural Engine, or FPGA — Metal, CUDA, WebGPU, AVX-512 |
+| **Kernel** | Linux + Docker + eBPF tools | A single `.rvf` file boots its own Linux kernel in 125 ms — eBPF accelerates hot paths |
+| **Storage** | PostgreSQL + Redis + S3 | Vector store, graph database, key-value cache, and 230+ SQL functions built in |
+| **Search** | Pinecone, Weaviate, Qdrant | HNSW indexing that learns from every query — results improve automatically |
+| **Graph** | Neo4j, Amazon Neptune | Full Cypher query engine with hyperedges, SPARQL, and graph transformers |
+| **AI Runtime** | llama.cpp, vLLM, Ollama | Run GGUF models locally on your hardware — no cloud APIs, no per-query costs |
+| **ML Framework** | PyTorch, TensorFlow | 46 attention mechanisms, spiking networks, transfer learning, verified training |
+| **Coordination** | etcd, ZooKeeper, Consul | Raft consensus, multi-master replication, CRDT delta sync, auto-sharding |
+| **Packaging** | Docker, Kubernetes | One `.rvf` file = your entire service. Runs on servers, browsers, phones, and IoT |
+| **Security** | Vault, manual audit logs | Post-quantum crypto (ML-DSA-65), witness chains, tamper-proof audit trail |
+| **Optimization** | Manual tuning, MLOps | SONA self-optimizes routing, ranking, and compression to your workload in <1 ms |
+
+The [RVF cognitive container](./crates/rvf/README.md) ties it all together: a single file that packages your vectors, models, data, and a bootable kernel. Drop it on any machine and it starts serving in 125 ms — no install, no dependencies. It branches like Git (only changes are copied), logs every operation in a tamper-proof chain, and runs anywhere from a browser to bare metal.
 
 ---
 
