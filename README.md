@@ -10,6 +10,9 @@
 
 ### **The self-learning, self-optimizing vector database — with graph intelligence, local AI, and PostgreSQL built in.**
 
+> Created by [rUv](https://ruv.io) and powers [Cognitum](https://cognitum.one), a 🏅 **CES 2026 Innovation Awards Honoree** — the world's first hardware designed specifically for AI agents.
+
+
 ```bash
 npx ruvector
 ```
@@ -190,7 +193,6 @@ User Query → [SONA Engine] → Model Response → User Feedback
 
 RuVector isn't a database you add to your stack — it's the entire stack. Self-learning, self-optimizing, and self-deploying. Everything an AI application needs to run, from bare metal hardware up to the application layer, in one package:
 
-> Created by [rUv](https://ruv.io) and powers [Cognitum](https://cognitum.one), a 🏅 **CES 2026 Innovation Awards Honoree** — the world's first hardware designed specifically for AI agents.
 
 | | Layer | Replaces | What It Does |
 |---|-------|----------|--------------|
