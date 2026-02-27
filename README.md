@@ -214,7 +214,8 @@ RuVector isn't a database you add to your stack — it's the entire stack. Self-
 | | Layer | Replaces | What It Does |
 |---|-------|----------|--------------|
 | 🔍 | **Search** | Pinecone, Weaviate, Qdrant | Self-learning HNSW — GNN improves results from every query |
-| 🗄️ | **Storage** | Separate database + cache | Vector store, graph DB, key-value cache, 230+ SQL functions (drops into PostgreSQL) |
+| 🗄️ | **Storage** | Separate database + cache | Vector store, graph DB, key-value cache — unified engine |
+| 🐘 | **PostgreSQL** | pgvector, pg_embedding | Drop-in replacement — 230+ SQL functions, same interface but search gets smarter over time |
 | 🔗 | **Graph** | Neo4j, Amazon Neptune | Cypher, W3C SPARQL 1.1, hyperedges — all built in |
 
 **AI & ML**
