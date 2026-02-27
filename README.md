@@ -194,7 +194,7 @@ RuVector isn't a database you add to your stack — it's the entire stack. Self-
 | 🔍 | **Search** | Pinecone, Weaviate, Qdrant | Self-learning HNSW — a GNN watches every query and improves results automatically |
 | 🔗 | **Graph** | Neo4j, Amazon Neptune | Full Cypher query engine with hyperedges, SPARQL, and 8 verified graph transformer modules |
 | 🤖 | **AI Runtime** | llama.cpp, vLLM, Ollama | Run GGUF models locally on your hardware — no cloud APIs, no per-query costs |
-| 🧠 | **ML Framework** | PyTorch, TensorFlow | 46 attention mechanisms, spiking networks, transfer learning, verified training |
+| 🧠 | **ML Framework** | PyTorch, TensorFlow | 46 attention mechanisms, 8 verified graph transformer modules (physics, bio, manifold, temporal, economic), spiking neural networks, sparse inference, mincut-gated attention, hyperbolic embeddings, sublinear solvers, domain expansion, verified training, quantum coherence, coherence measurement |
 | 🌐 | **Coordination** | etcd, ZooKeeper, Consul | Raft consensus, multi-master replication, CRDT delta sync, auto-sharding |
 | 📦 | **Packaging** | Docker, Kubernetes | One `.rvf` file = your entire service. Runs on servers, browsers, phones, and IoT |
 | 🔐 | **Security** | Vault, manual audit logs | Post-quantum crypto (ML-DSA-65), witness chains, tamper-proof audit trail |
