@@ -112,6 +112,7 @@ members = [
     "examples/rvf-kernel-optimized",
     "examples/verified-applications",
     "crates/thermorust",
+    "crates/ruvector-dither",
 ]
 resolver = "2"
 

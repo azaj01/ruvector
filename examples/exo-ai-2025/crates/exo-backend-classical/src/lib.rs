@@ -6,8 +6,10 @@
 
 #![warn(missing_docs)]
 
+pub mod dither_quantizer;
 pub mod domain_bridge;
 pub mod graph;
+pub mod thermo_layer;
 pub mod transfer_orchestrator;
 pub mod vector;
 

@@ -8375,6 +8375,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-dither"
+version = "0.1.0"
+dependencies = [
+ "criterion 0.5.1",
+]
+
+[[package]]
 name = "ruvector-domain-expansion"
 version = "2.0.5"
 dependencies = [
