@@ -5,19 +5,43 @@
 [![npm](https://img.shields.io/npm/v/@ruvector/ruvllm.svg)](https://www.npmjs.com/package/@ruvector/ruvllm)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-**Run LLMs on your own hardware -- Metal, CUDA, WebGPU, Neural Engine -- no cloud APIs, no per-query bills.**
+**The local LLM inference engine that learns from every request -- Metal, CUDA, WebGPU, no cloud APIs.**
 
-RuvLLM is a Rust inference engine that loads GGUF models and runs them locally with hardware acceleration. It learns from every request through SONA (Self-Optimizing Neural Architecture), so responses get better over time without manual tuning. It supports Apple Silicon, NVIDIA GPUs, and WebAssembly, and plugs directly into the [RuVector](https://github.com/ruvnet/ruvector) ecosystem for vector search and graph intelligence.
+```bash
+cargo add ruvllm
+```
 
-| | RuvLLM (local) | Cloud LLM API |
-|---|---|---|
-| **Cost** | Free after hardware | Pay per token / per call |
-| **Privacy** | Data never leaves your machine | Data sent to third party |
-| **Latency** | No network round-trip | 100-500 ms network overhead |
-| **Self-learning** | SONA adapts to your workload automatically | Static -- same behavior every time |
-| **Fine-tuning** | MicroLoRA per-request in <1 ms | Upload datasets, wait hours |
-| **Offline** | Works without internet | Requires connectivity |
-| **Hardware** | Metal, CUDA, ANE, WebGPU, CPU | N/A |
+RuvLLM loads GGUF models and runs them on your hardware with full acceleration -- Apple Silicon, NVIDIA GPUs, WebAssembly, whatever you have. Unlike other local inference tools, it gets smarter over time: SONA (Self-Optimizing Neural Architecture) watches how you use it and adapts automatically, so responses improve without manual tuning. It's part of [RuVector](https://github.com/ruvnet/ruvector), the self-learning vector database with graph intelligence.
+
+| | RuvLLM | OpenAI API | llama.cpp | Ollama | vLLM |
+|---|---|---|---|---|---|
+| **Cost** | Free after hardware | Per-token billing | Free | Free | Free |
+| **Privacy** | Data stays on your machine | Sent to third party | Local | Local | Local |
+| **Self-learning** | SONA adapts automatically | Static | Static | Static | Static |
+| **Per-request tuning** | MicroLoRA in <1 ms | Not available | Not available | Not available | Not available |
+| **Hardware support** | Metal, CUDA, ANE, WebGPU, CPU | N/A | Metal, CUDA, CPU | Metal, CUDA, CPU | CUDA only |
+| **WASM / Browser** | Yes (5.5 KB runtime) | Via network call | Not available | Not available | Not available |
+| **Vector DB integration** | Built-in (RuVector) | Separate service | Not available | Not available | Not available |
+| **Speculative decoding** | Yes | N/A | Yes | No | Yes |
+| **Continuous batching** | Yes | N/A | No | No | Yes |
+| **Production serving** | mistral-rs backend | N/A | Server mode | Server mode | Native |
+
+## Key Features
+
+| Feature | What It Does | Why It Matters |
+|---------|-------------|----------------|
+| **SONA three-tier learning** | Adapts to your queries at three speeds: instant (<1 ms), background (~100 ms), deep (minutes) | Responses improve automatically without manual retraining |
+| **Metal + CUDA + ANE** | Hardware-accelerated inference across Apple Silicon, NVIDIA GPUs, and Apple Neural Engine | Get the most out of whatever hardware you have |
+| **Flash Attention 2** | Memory-efficient attention with O(N) complexity and online softmax | Longer contexts with less memory |
+| **GGUF memory mapping** | Memory-mapped model loading with quantization (Q4K, Q8, FP16) | Load large models fast, use 4-8x less RAM |
+| **Speculative decoding** | Draft model generates candidates, target model verifies in parallel | 2-3x faster text generation |
+| **Continuous batching** | Dynamic batch scheduling for concurrent requests | 2-3x throughput improvement for serving |
+| **MicroLoRA** | Per-request fine-tuning with rank 1-2 adapters | Personalize responses in <1 ms without full retraining |
+| **HuggingFace Hub** | Download and upload models directly | One-line model access, easy sharing |
+| **mistral-rs backend** | PagedAttention, X-LoRA, ISQ for production serving | Scale to 50+ concurrent users |
+| **Task-specific adapters** | 5 pre-trained LoRA adapters (coder, researcher, security, architect, reviewer) | Instant specialization with hot-swap |
+
+> Part of the [RuVector](https://github.com/ruvnet/ruvector) ecosystem -- the self-learning vector database with graph intelligence, local AI, and PostgreSQL built in.
 
 ## Quick Start
 
@@ -60,21 +84,6 @@ Or install the npm package:
 ```bash
 npm install @ruvector/ruvllm
 ```
-
-## Key Features
-
-| Feature | What It Does | Why It Matters |
-|---------|-------------|----------------|
-| **SONA three-tier learning** | Adapts to your queries at three speeds: instant (<1 ms), background (~100 ms), deep (minutes) | Responses improve automatically without manual retraining |
-| **Metal + CUDA + ANE** | Hardware-accelerated inference across Apple Silicon, NVIDIA GPUs, and Apple Neural Engine | Get the most out of whatever hardware you have |
-| **Flash Attention 2** | Memory-efficient attention with O(N) complexity and online softmax | Longer contexts with less memory |
-| **GGUF memory mapping** | Memory-mapped model loading with quantization (Q4K, Q8, FP16) | Load large models fast, use 4-8x less RAM |
-| **Speculative decoding** | Draft model generates candidates, target model verifies in parallel | 2-3x faster text generation |
-| **Continuous batching** | Dynamic batch scheduling for concurrent requests | 2-3x throughput improvement for serving |
-| **MicroLoRA** | Per-request fine-tuning with rank 1-2 adapters | Personalize responses in <1 ms without full retraining |
-| **HuggingFace Hub** | Download and upload models directly | One-line model access, easy sharing |
-| **mistral-rs backend** | PagedAttention, X-LoRA, ISQ for production serving | Scale to 50+ concurrent users |
-| **Task-specific adapters** | 5 pre-trained LoRA adapters (coder, researcher, security, architect, reviewer) | Instant specialization with hot-swap |
 
 ## What's New in v2.3
 
@@ -793,3 +802,7 @@ Contributions welcome! Please see [CONTRIBUTING.md](../../CONTRIBUTING.md) for g
 - [API Documentation](https://docs.rs/ruvllm)
 - [npm Package](https://www.npmjs.com/package/@ruvector/ruvllm)
 - [Issue Tracker](https://github.com/ruvnet/ruvector/issues)
+
+---
+
+Part of [RuVector](https://github.com/ruvnet/ruvector) -- the self-learning vector database.
