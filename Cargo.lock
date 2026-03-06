@@ -9297,23 +9297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruvector-sparse-inference-wasm"
-version = "2.0.5"
-dependencies = [
- "console_error_panic_hook",
- "getrandom 0.3.4",
- "js-sys",
- "ruvector-sparse-inference",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-bindgen-test",
- "web-sys",
-]
-
-[[package]]
 name = "ruvector-temporal-tensor"
 version = "2.0.5"
 
