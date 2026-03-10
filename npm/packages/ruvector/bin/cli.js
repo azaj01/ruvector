@@ -3551,14 +3551,28 @@ hooksCmd.command('init')
   }
 
   // MCP server configuration (unless --minimal or --no-mcp)
+  // Note: We only use enabledMcpjsonServers (not mcpServers) to avoid
+  // Claude Code regenerating .mcp.json and stripping user-added fields
+  // like autoStart. See: https://github.com/ruvnet/RuVector/issues/250
   if (!opts.minimal && opts.mcp !== false) {
-    settings.mcpServers = settings.mcpServers || {};
-    // Only add if not already configured
-    if (!settings.mcpServers['claude-flow'] && !settings.enabledMcpjsonServers?.includes('claude-flow')) {
-      settings.enabledMcpjsonServers = settings.enabledMcpjsonServers || [];
-      if (!settings.enabledMcpjsonServers.includes('claude-flow')) {
-        settings.enabledMcpjsonServers.push('claude-flow');
+    // Only reference servers via enabledMcpjsonServers — never write mcpServers: {}
+    // which can trigger Claude Code to regenerate .mcp.json
+    const mcpJsonPath = path.join(process.cwd(), '.mcp.json');
+    let mcpJson = {};
+    if (fs.existsSync(mcpJsonPath)) {
+      try { mcpJson = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8')); } catch {}
+    }
+    // Only add to enabledMcpjsonServers if the server is defined in .mcp.json
+    if (mcpJson.mcpServers?.['claude-flow'] || mcpJson.mcpServers?.['ruvector']) {
+      const serverName = mcpJson.mcpServers['ruvector'] ? 'ruvector' : 'claude-flow';
+      if (!settings.enabledMcpjsonServers?.includes(serverName)) {
+        settings.enabledMcpjsonServers = settings.enabledMcpjsonServers || [];
+        settings.enabledMcpjsonServers.push(serverName);
       }
+    }
+    // Remove stale mcpServers: {} that could trigger .mcp.json regeneration
+    if (settings.mcpServers && Object.keys(settings.mcpServers).length === 0) {
+      delete settings.mcpServers;
     }
     console.log(chalk.blue('  ✓ MCP servers configured'));
   }
@@ -5768,6 +5782,16 @@ hooksCmd.command('doctor')
           });
         };
         Object.values(settings.hooks || {}).forEach(checkCommands);
+
+        // Remove empty mcpServers that can cause .mcp.json overwrites (#250)
+        if (settings.mcpServers && Object.keys(settings.mcpServers).length === 0) {
+          if (opts.fix) {
+            delete settings.mcpServers;
+            fixes.push('Removed empty mcpServers to prevent .mcp.json overwrites');
+          } else {
+            issues.push({ severity: 'warning', message: 'Empty mcpServers in settings.json can cause .mcp.json overwrites', fix: 'Will remove empty mcpServers' });
+          }
+        }
 
         // Save fixes
         if (opts.fix && fixes.length > 0) {
