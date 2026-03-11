@@ -605,8 +605,8 @@
     </div>
 
     <script type="module">
-        // Import from CDN
-        const CDN_BASE = 'https://unpkg.com/@ruvector/cnn@0.1.0';
+        // Import locally (WASM files hosted alongside HTML)
+        const WASM_BASE = '.';
 
         // State
         let embedder = null;
@@ -643,16 +643,24 @@
         // Initialize WASM module
         async function initWasm() {
             try {
-                log('Loading WASM module from CDN...');
+                console.log('[RuVector] Starting WASM initialization...');
+                console.log('[RuVector] WASM_BASE:', WASM_BASE);
+                log('Loading WASM module...');
 
-                // Dynamic import from CDN
-                const module = await import(`${CDN_BASE}/ruvector_cnn_wasm.js`);
+                // Dynamic import (local files)
+                console.log('[RuVector] Importing JS module from:', `${WASM_BASE}/ruvector_cnn_wasm.js`);
+                const module = await import(`${WASM_BASE}/ruvector_cnn_wasm.js`);
+                console.log('[RuVector] JS module loaded, exports:', Object.keys(module));
 
                 // Initialize the WASM (use object format to avoid deprecation warning)
-                await module.default({ module_or_path: `${CDN_BASE}/ruvector_cnn_wasm_bg.wasm` });
+                console.log('[RuVector] Initializing WASM from:', `${WASM_BASE}/ruvector_cnn_wasm_bg.wasm`);
+                await module.default({ module_or_path: `${WASM_BASE}/ruvector_cnn_wasm_bg.wasm` });
+                console.log('[RuVector] WASM initialized successfully');
 
                 // Create embedder (WasmCnnEmbedder, not CnnEmbedder)
+                console.log('[RuVector] Creating WasmCnnEmbedder...');
                 embedder = new module.WasmCnnEmbedder();
+                console.log('[RuVector] Embedder created:', embedder);
 
                 log('WASM module loaded successfully!', 'success');
                 log(`Embedding dimension: ${embedder.embedding_dim}`);
@@ -662,10 +670,12 @@
 
                 // Store module reference for similarity calculation
                 window.wasmModule = module;
+                console.log('[RuVector] Ready!');
 
             } catch (error) {
+                console.error('[RuVector] WASM init failed:', error);
+                console.error('[RuVector] Error stack:', error.stack);
                 log(`Failed to load WASM: ${error.message}`, 'warning');
-                console.error(error);
 
                 // Fallback: Show demo with simulated embeddings
                 loadingScreen.innerHTML = `
