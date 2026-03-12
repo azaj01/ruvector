@@ -344,68 +344,6 @@ unsafe fn neon_load_combined_24bit(ptr: *const u8) -> u32 {
     b0 | (b1 << 8) | (b2 << 16)
 }
 
-/// Process 4 groups (32 values) using pure NEON SIMD operations.
-///
-/// This function uses NEON's variable shift instructions to extract 3-bit values
-/// in parallel, then converts to float using vcvtq_f32_s32.
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn neon_process_4_groups_ultra(
-    ptr: *const u8,
-    bias_i32: core::arch::aarch64::int32x4_t,
-    scale_vec: core::arch::aarch64::float32x4_t,
-    out_ptr: *mut f32,
-) {
-    use core::arch::aarch64::*;
-
-    // Constants for bit extraction (negative values for right shift via vshlq)
-    let shifts_lo: int32x4_t = vld1q_s32([0i32, -3, -6, -9].as_ptr());
-    let shifts_hi: int32x4_t = vld1q_s32([-12i32, -15, -18, -21].as_ptr());
-    let mask_3bit = vdupq_n_u32(0x7);
-
-    // Load 4 x 3-byte groups as combined u32 values
-    let c0 = (*ptr as u32) | ((*ptr.add(1) as u32) << 8) | ((*ptr.add(2) as u32) << 16);
-    let c1 = (*ptr.add(3) as u32) | ((*ptr.add(4) as u32) << 8) | ((*ptr.add(5) as u32) << 16);
-    let c2 = (*ptr.add(6) as u32) | ((*ptr.add(7) as u32) << 8) | ((*ptr.add(8) as u32) << 16);
-    let c3 = (*ptr.add(9) as u32) | ((*ptr.add(10) as u32) << 8) | ((*ptr.add(11) as u32) << 16);
-
-    // Process group 0
-    let v0 = vdupq_n_u32(c0);
-    let lo0 = vandq_u32(vshlq_u32(v0, shifts_lo), mask_3bit);
-    let hi0 = vandq_u32(vshlq_u32(v0, shifts_hi), mask_3bit);
-    let lo0_i = vaddq_s32(vreinterpretq_s32_u32(lo0), bias_i32);
-    let hi0_i = vaddq_s32(vreinterpretq_s32_u32(hi0), bias_i32);
-    vst1q_f32(out_ptr, vmulq_f32(vcvtq_f32_s32(lo0_i), scale_vec));
-    vst1q_f32(out_ptr.add(4), vmulq_f32(vcvtq_f32_s32(hi0_i), scale_vec));
-
-    // Process group 1
-    let v1 = vdupq_n_u32(c1);
-    let lo1 = vandq_u32(vshlq_u32(v1, shifts_lo), mask_3bit);
-    let hi1 = vandq_u32(vshlq_u32(v1, shifts_hi), mask_3bit);
-    let lo1_i = vaddq_s32(vreinterpretq_s32_u32(lo1), bias_i32);
-    let hi1_i = vaddq_s32(vreinterpretq_s32_u32(hi1), bias_i32);
-    vst1q_f32(out_ptr.add(8), vmulq_f32(vcvtq_f32_s32(lo1_i), scale_vec));
-    vst1q_f32(out_ptr.add(12), vmulq_f32(vcvtq_f32_s32(hi1_i), scale_vec));
-
-    // Process group 2
-    let v2 = vdupq_n_u32(c2);
-    let lo2 = vandq_u32(vshlq_u32(v2, shifts_lo), mask_3bit);
-    let hi2 = vandq_u32(vshlq_u32(v2, shifts_hi), mask_3bit);
-    let lo2_i = vaddq_s32(vreinterpretq_s32_u32(lo2), bias_i32);
-    let hi2_i = vaddq_s32(vreinterpretq_s32_u32(hi2), bias_i32);
-    vst1q_f32(out_ptr.add(16), vmulq_f32(vcvtq_f32_s32(lo2_i), scale_vec));
-    vst1q_f32(out_ptr.add(20), vmulq_f32(vcvtq_f32_s32(hi2_i), scale_vec));
-
-    // Process group 3
-    let v3 = vdupq_n_u32(c3);
-    let lo3 = vandq_u32(vshlq_u32(v3, shifts_lo), mask_3bit);
-    let hi3 = vandq_u32(vshlq_u32(v3, shifts_hi), mask_3bit);
-    let lo3_i = vaddq_s32(vreinterpretq_s32_u32(lo3), bias_i32);
-    let hi3_i = vaddq_s32(vreinterpretq_s32_u32(hi3), bias_i32);
-    vst1q_f32(out_ptr.add(24), vmulq_f32(vcvtq_f32_s32(lo3_i), scale_vec));
-    vst1q_f32(out_ptr.add(28), vmulq_f32(vcvtq_f32_s32(hi3_i), scale_vec));
-}
-
 /// Extract 8 x 3-bit values and convert to f32 with bias and scale
 /// Returns (low 4 floats, high 4 floats) as float32x4_t
 #[cfg(target_arch = "aarch64")]
