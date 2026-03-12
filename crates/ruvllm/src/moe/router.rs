@@ -21,6 +21,133 @@
 use super::{ExpertAffinity, ExpertId, MoeMetrics};
 use std::time::Instant;
 
+// ============================================================================
+// CacheMask: Bitmask-based cache residency tracking (P1 optimization)
+// ============================================================================
+
+/// Bitmask-based cache residency tracking for efficient memory access patterns.
+///
+/// Uses a u64 for up to 64 experts (most common case: 8, 16, 32, 64 experts).
+/// Falls back to Vec<u64> for larger models.
+#[derive(Debug, Clone)]
+struct CacheMask {
+    /// Bitmask for small models (up to 64 experts)
+    small: u64,
+    /// Extended bitmask for larger models (>64 experts)
+    extended: Option<Vec<u64>>,
+    /// Number of experts tracked
+    num_experts: usize,
+}
+
+impl CacheMask {
+    /// Create a new cache mask for the given number of experts
+    fn new(num_experts: usize) -> Self {
+        if num_experts <= 64 {
+            Self {
+                small: 0,
+                extended: None,
+                num_experts,
+            }
+        } else {
+            let num_words = (num_experts + 63) / 64;
+            Self {
+                small: 0,
+                extended: Some(vec![0u64; num_words]),
+                num_experts,
+            }
+        }
+    }
+
+    /// Check if an expert is resident
+    #[inline]
+    fn is_set(&self, id: ExpertId) -> bool {
+        if id >= self.num_experts {
+            return false;
+        }
+        if self.num_experts <= 64 {
+            (self.small & (1u64 << id)) != 0
+        } else {
+            let word = id / 64;
+            let bit = id % 64;
+            self.extended
+                .as_ref()
+                .map(|v| (v[word] & (1u64 << bit)) != 0)
+                .unwrap_or(false)
+        }
+    }
+
+    /// Set an expert as resident or non-resident
+    #[inline]
+    fn set(&mut self, id: ExpertId, resident: bool) {
+        if id >= self.num_experts {
+            return;
+        }
+        if self.num_experts <= 64 {
+            if resident {
+                self.small |= 1u64 << id;
+            } else {
+                self.small &= !(1u64 << id);
+            }
+        } else if let Some(ref mut v) = self.extended {
+            let word = id / 64;
+            let bit = id % 64;
+            if resident {
+                v[word] |= 1u64 << bit;
+            } else {
+                v[word] &= !(1u64 << bit);
+            }
+        }
+    }
+
+    /// Clear all bits (no experts resident)
+    #[inline]
+    fn clear(&mut self) {
+        self.small = 0;
+        if let Some(ref mut v) = self.extended {
+            v.fill(0);
+        }
+    }
+
+    /// Get list of resident expert IDs
+    fn resident_list(&self) -> Vec<ExpertId> {
+        let mut result = Vec::new();
+        if self.num_experts <= 64 {
+            let mut bits = self.small;
+            while bits != 0 {
+                let trailing = bits.trailing_zeros() as usize;
+                result.push(trailing);
+                bits &= bits - 1; // Clear lowest set bit
+            }
+        } else if let Some(ref v) = self.extended {
+            for (word_idx, &word) in v.iter().enumerate() {
+                let mut bits = word;
+                while bits != 0 {
+                    let trailing = bits.trailing_zeros() as usize;
+                    let id = word_idx * 64 + trailing;
+                    if id < self.num_experts {
+                        result.push(id);
+                    }
+                    bits &= bits - 1;
+                }
+            }
+        }
+        result
+    }
+
+    /// Count number of resident experts (popcount)
+    #[inline]
+    fn count(&self) -> usize {
+        if self.num_experts <= 64 {
+            self.small.count_ones() as usize
+        } else {
+            self.extended
+                .as_ref()
+                .map(|v| v.iter().map(|w| w.count_ones() as usize).sum())
+                .unwrap_or(0)
+        }
+    }
+}
+
 /// Paging direction for expert load/evict operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PagingDirection {
@@ -202,8 +329,8 @@ pub struct MemoryAwareRouter {
     config: RouterConfig,
     /// Expert affinity tracker
     affinity: ExpertAffinity,
-    /// Which experts are currently in cache (indexed by expert_id)
-    cache_resident: Vec<bool>,
+    /// Bitmask tracking which experts are currently in cache (P1 optimization)
+    cache_resident: CacheMask,
     /// Routing and caching metrics
     metrics: MoeMetrics,
 }
@@ -223,7 +350,7 @@ impl MemoryAwareRouter {
         config.validate()?;
 
         Ok(Self {
-            cache_resident: vec![false; config.num_experts],
+            cache_resident: CacheMask::new(config.num_experts),
             config,
             affinity,
             metrics: MoeMetrics::new(),
@@ -314,7 +441,7 @@ impl MemoryAwareRouter {
                 *score = 0.0;
                 continue;
             }
-            if self.cache_resident.get(id).copied().unwrap_or(false) {
+            if self.cache_resident.is_set(id) {
                 *score += self.config.cache_bonus;
             }
         }
@@ -393,26 +520,22 @@ impl MemoryAwareRouter {
     /// * `resident` - List of expert IDs currently in cache
     pub fn update_cache_state(&mut self, resident: &[ExpertId]) {
         // Clear all
-        self.cache_resident.fill(false);
+        self.cache_resident.clear();
 
         // Set resident experts
         for &id in resident {
-            if id < self.cache_resident.len() {
-                self.cache_resident[id] = true;
-            }
+            self.cache_resident.set(id, true);
         }
     }
 
     /// Mark a single expert as resident or non-resident
     pub fn set_resident(&mut self, expert_id: ExpertId, resident: bool) {
-        if expert_id < self.cache_resident.len() {
-            self.cache_resident[expert_id] = resident;
-        }
+        self.cache_resident.set(expert_id, resident);
     }
 
     /// Check if an expert is currently resident
     pub fn is_resident(&self, expert_id: ExpertId) -> bool {
-        self.cache_resident.get(expert_id).copied().unwrap_or(false)
+        self.cache_resident.is_set(expert_id)
     }
 
     /// Generate paging requests for selected experts
@@ -483,12 +606,7 @@ impl MemoryAwareRouter {
 
     /// Get list of currently resident experts
     pub fn resident_experts(&self) -> Vec<ExpertId> {
-        self.cache_resident
-            .iter()
-            .enumerate()
-            .filter(|(_, &resident)| resident)
-            .map(|(id, _)| id)
-            .collect()
+        self.cache_resident.resident_list()
     }
 
     /// Get number of experts
@@ -946,5 +1064,115 @@ mod tests {
 
         let config2 = RouterConfig::new(8, 2).with_cache_bonus(-0.5);
         assert!((config2.cache_bonus - 0.0).abs() < 1e-6, "cache_bonus should be clamped to 0.0");
+    }
+
+    // ---------------------------------------------------------------
+    // P1 Optimization Tests: CacheMask bitmask
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_cache_mask_small() {
+        let mut mask = CacheMask::new(64);
+
+        // Initially all clear
+        for i in 0..64 {
+            assert!(!mask.is_set(i), "Bit {} should be clear initially", i);
+        }
+
+        // Set some bits
+        mask.set(0, true);
+        mask.set(31, true);
+        mask.set(63, true);
+
+        assert!(mask.is_set(0));
+        assert!(mask.is_set(31));
+        assert!(mask.is_set(63));
+        assert!(!mask.is_set(1));
+        assert!(!mask.is_set(32));
+
+        // Count should be 3
+        assert_eq!(mask.count(), 3);
+
+        // Resident list
+        let list = mask.resident_list();
+        assert_eq!(list.len(), 3);
+        assert!(list.contains(&0));
+        assert!(list.contains(&31));
+        assert!(list.contains(&63));
+
+        // Clear and verify
+        mask.clear();
+        assert_eq!(mask.count(), 0);
+        assert!(!mask.is_set(0));
+    }
+
+    #[test]
+    fn test_cache_mask_large() {
+        // Test with >64 experts (uses extended Vec<u64>)
+        let mut mask = CacheMask::new(128);
+
+        // Set bits across word boundaries
+        mask.set(0, true);
+        mask.set(63, true);
+        mask.set(64, true);  // First bit of second word
+        mask.set(127, true);
+
+        assert!(mask.is_set(0));
+        assert!(mask.is_set(63));
+        assert!(mask.is_set(64));
+        assert!(mask.is_set(127));
+        assert!(!mask.is_set(65));
+
+        assert_eq!(mask.count(), 4);
+
+        let list = mask.resident_list();
+        assert_eq!(list.len(), 4);
+
+        // Clear
+        mask.clear();
+        assert_eq!(mask.count(), 0);
+    }
+
+    #[test]
+    fn test_cache_mask_out_of_bounds() {
+        let mut mask = CacheMask::new(8);
+
+        // Out of bounds should be no-op and return false
+        mask.set(100, true);
+        assert!(!mask.is_set(100));
+        assert_eq!(mask.count(), 0);
+    }
+
+    #[test]
+    fn test_router_with_many_experts() {
+        // Test router with >64 experts to exercise extended bitmask
+        let config = RouterConfig::new(128, 4);
+        let mut router = MemoryAwareRouter::with_default_affinity(config).unwrap();
+
+        // Set some residents across the full range
+        router.update_cache_state(&[0, 32, 64, 96, 127]);
+
+        assert!(router.is_resident(0));
+        assert!(router.is_resident(64));
+        assert!(router.is_resident(127));
+        assert!(!router.is_resident(1));
+
+        let resident = router.resident_experts();
+        assert_eq!(resident.len(), 5);
+    }
+
+    #[test]
+    fn test_empty_cache_state() {
+        let mut router = make_router(8, 2, 0.15);
+
+        // Empty update
+        router.update_cache_state(&[]);
+
+        // No experts should be resident
+        for i in 0..8 {
+            assert!(!router.is_resident(i), "Expert {} should not be resident", i);
+        }
+
+        assert!(router.resident_experts().is_empty());
     }
 }

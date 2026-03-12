@@ -24,6 +24,94 @@
 
 use super::ExpertId;
 
+/// SIMD-optimized decay for f32 scores.
+///
+/// Applies `scores[i] *= decay` for all elements using platform-specific
+/// SIMD intrinsics when available, with scalar fallback.
+#[inline]
+fn decay_scores_simd(scores: &mut [f32], decay: f32) {
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        decay_scores_neon(scores, decay);
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    {
+        decay_scores_avx2(scores, decay);
+    }
+
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_feature = "neon"),
+        all(target_arch = "x86_64", target_feature = "avx2")
+    )))]
+    {
+        decay_scores_scalar(scores, decay);
+    }
+}
+
+/// Scalar fallback for decay
+#[inline]
+fn decay_scores_scalar(scores: &mut [f32], decay: f32) {
+    for score in scores.iter_mut() {
+        *score *= decay;
+    }
+}
+
+/// NEON-optimized decay for ARM64
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[inline]
+fn decay_scores_neon(scores: &mut [f32], decay: f32) {
+    use std::arch::aarch64::*;
+
+    let len = scores.len();
+    let chunks = len / 4;
+    let remainder = len % 4;
+
+    unsafe {
+        let decay_vec = vdupq_n_f32(decay);
+        let ptr = scores.as_mut_ptr();
+
+        for i in 0..chunks {
+            let offset = i * 4;
+            let vals = vld1q_f32(ptr.add(offset));
+            let result = vmulq_f32(vals, decay_vec);
+            vst1q_f32(ptr.add(offset), result);
+        }
+
+        // Handle remainder with scalar
+        for i in (chunks * 4)..len {
+            *scores.get_unchecked_mut(i) *= decay;
+        }
+    }
+}
+
+/// AVX2-optimized decay for x86_64
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[inline]
+fn decay_scores_avx2(scores: &mut [f32], decay: f32) {
+    use std::arch::x86_64::*;
+
+    let len = scores.len();
+    let chunks = len / 8;
+
+    unsafe {
+        let decay_vec = _mm256_set1_ps(decay);
+        let ptr = scores.as_mut_ptr();
+
+        for i in 0..chunks {
+            let offset = i * 8;
+            let vals = _mm256_loadu_ps(ptr.add(offset));
+            let result = _mm256_mul_ps(vals, decay_vec);
+            _mm256_storeu_ps(ptr.add(offset), result);
+        }
+
+        // Handle remainder with scalar
+        for i in (chunks * 8)..len {
+            *scores.get_unchecked_mut(i) *= decay;
+        }
+    }
+}
+
 /// Configuration for expert affinity tracking.
 ///
 /// # Example
@@ -172,9 +260,8 @@ impl ExpertAffinity {
     /// * `activated` - Expert IDs that were activated this step
     pub fn update(&mut self, activated: &[ExpertId]) {
         // Step 1: Decay all scores (INV-2: monotonic without activation)
-        for score in &mut self.scores {
-            *score *= self.config.decay;
-        }
+        // Use SIMD-optimized decay when available
+        decay_scores_simd(&mut self.scores, self.config.decay);
 
         // Step 2: Boost activated experts
         for &id in activated {
@@ -771,5 +858,106 @@ mod tests {
         assert!((config.decay - 0.99).abs() < 1e-6);
         assert!((config.activation_boost - 1.0).abs() < 1e-6);
         assert!((config.max_score - 1.0).abs() < 1e-6);
+    }
+
+    // =====================================================================
+    // P1 Optimization Tests: SIMD decay
+    // =====================================================================
+
+    /// Test: SIMD decay with non-aligned sizes (tests remainder handling)
+    #[test]
+    fn test_simd_decay_non_aligned() {
+        // Test sizes that don't align to SIMD widths (4 for NEON, 8 for AVX2)
+        for size in [1, 3, 5, 7, 9, 15, 17, 33, 65] {
+            let config = AffinityConfig::with_num_experts(size).with_decay(0.5);
+            let mut affinity = ExpertAffinity::new(config);
+
+            // Activate all experts
+            let all_experts: Vec<usize> = (0..size).collect();
+            affinity.update(&all_experts);
+
+            // All should be at 1.0
+            for &score in affinity.scores() {
+                assert!((score - 1.0).abs() < 1e-6);
+            }
+
+            // Decay once
+            affinity.update(&[]);
+
+            // All should be at 0.5
+            for (i, &score) in affinity.scores().iter().enumerate() {
+                assert!(
+                    (score - 0.5).abs() < 1e-6,
+                    "Expert {} score should be 0.5, got {}",
+                    i,
+                    score
+                );
+            }
+        }
+    }
+
+    /// Test: SIMD decay with large expert count
+    #[test]
+    fn test_simd_decay_large() {
+        let config = AffinityConfig::with_num_experts(256).with_decay(0.9);
+        let mut affinity = ExpertAffinity::new(config);
+
+        // Activate first 128 experts
+        let activated: Vec<usize> = (0..128).collect();
+        affinity.update(&activated);
+
+        // Decay multiple times
+        for _ in 0..10 {
+            affinity.update(&[]);
+        }
+
+        // All activated scores should have decayed significantly
+        let expected = 0.9f32.powi(10);
+        for i in 0..128 {
+            let score = affinity.score(i);
+            assert!(
+                (score - expected).abs() < 1e-5,
+                "Expert {} score should be ~{}, got {}",
+                i,
+                expected,
+                score
+            );
+        }
+
+        // Non-activated should still be 0
+        for i in 128..256 {
+            assert_eq!(affinity.score(i), 0.0);
+        }
+    }
+
+    /// Test: SIMD decay correctness (scalar vs SIMD equivalence)
+    #[test]
+    fn test_simd_decay_correctness() {
+        let config = AffinityConfig::with_num_experts(64)
+            .with_decay(0.87)
+            .with_activation_boost(0.33);
+        let mut affinity = ExpertAffinity::new(config);
+
+        // Activate various experts with a pattern
+        affinity.update(&[0, 7, 15, 23, 31, 39, 47, 55, 63]);
+
+        // Record scores
+        let scores_before: Vec<f32> = affinity.scores().to_vec();
+
+        // Decay
+        affinity.update(&[]);
+
+        // Verify each score decayed correctly
+        for (i, (&before, &after)) in scores_before.iter().zip(affinity.scores().iter()).enumerate() {
+            let expected = before * 0.87;
+            assert!(
+                (after - expected).abs() < 1e-6,
+                "Expert {} decay incorrect: {} * 0.87 = {}, got {}",
+                i,
+                before,
+                expected,
+                after
+            );
+        }
     }
 }
