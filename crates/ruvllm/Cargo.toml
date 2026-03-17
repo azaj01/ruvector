@@ -264,6 +264,11 @@ needless_range_loop = "allow"
 useless_vec = "allow"
 unnecessary_cast = "allow"
 excessive_precision = "allow"
+# Allow patterns that are clearer with explicit form
+manual_slice_size_calculation = "allow"
+manual_ok_err = "allow"
+explicit_auto_deref = "allow"
+redundant_pattern_matching = "allow"
 
 [lints.rust]
 # Allow common patterns in test code
