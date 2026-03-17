@@ -179,6 +179,11 @@ pub async fn create_router() -> (Router, AppState) {
     let feeds: Arc<dashmap::DashMap<String, crate::types::FeedConfig>> =
         Arc::new(dashmap::DashMap::new());
 
+    // ── Common Crawl Integration (ADR-115) ──
+    let web_store = Arc::new(crate::web_store::WebMemoryStore::new(store.clone()));
+    let crawl_adapter = Arc::new(crate::pipeline::CommonCrawlAdapter::new());
+    tracing::info!("Common Crawl adapter initialized (ADR-115)");
+
     // ── Midstream Platform (ADR-077) ──
     let nano_scheduler = Arc::new(crate::midstream::create_scheduler());
     let attractor_results = Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
@@ -257,6 +262,8 @@ pub async fn create_router() -> (Router, AppState) {
         optimizer,
         pipeline_metrics,
         feeds,
+        web_store,
+        crawl_adapter,
     };
 
     let router = Router::new()
@@ -2850,7 +2857,8 @@ async fn pipeline_crawl_discover(
 ) -> Result<Json<CrawlDiscoverResponse>, (StatusCode, String)> {
     check_read_only(&state)?;
 
-    let cc = crate::pipeline::CommonCrawlAdapter::new();
+    // Use persistent adapter from AppState (ADR-115)
+    let cc = &state.crawl_adapter;
     if let Some(ref idx) = req.crawl_index {
         cc.set_crawl_index(idx).await;
     }
@@ -2929,13 +2937,16 @@ async fn pipeline_crawl_discover(
     }))
 }
 
-/// GET /v1/pipeline/crawl/stats — Common Crawl adapter statistics
+/// GET /v1/pipeline/crawl/stats — Common Crawl adapter statistics (ADR-115)
 async fn pipeline_crawl_stats(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    // Create a fresh adapter (in production, this would be part of AppState)
-    let cc = crate::pipeline::CommonCrawlAdapter::new();
+    // Use persistent adapter from AppState (ADR-115)
+    let cc = &state.crawl_adapter;
     let (queries, fetched, extracted, dupes, errors) = cc.stats();
+
+    // Include WebMemoryStore stats
+    let web_status = state.web_store.status();
 
     Json(serde_json::json!({
         "adapter": "common_crawl",
@@ -2946,6 +2957,19 @@ async fn pipeline_crawl_stats(
         "errors": errors,
         "seen_urls": cc.seen_urls_count(),
         "seen_hashes": cc.seen_hashes_count(),
+        "web_memory": {
+            "total_memories": web_status.total_web_memories,
+            "total_domains": web_status.total_domains,
+            "link_edges": web_status.total_link_edges,
+            "page_deltas": web_status.total_page_deltas,
+            "compression_ratio": web_status.compression_ratio,
+            "tier_distribution": {
+                "full": web_status.tier_distribution.full,
+                "delta_compressed": web_status.tier_distribution.delta_compressed,
+                "centroid_merged": web_status.tier_distribution.centroid_merged,
+                "archived": web_status.tier_distribution.archived,
+            }
+        }
     }))
 }
 
