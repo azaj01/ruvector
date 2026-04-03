@@ -9103,6 +9103,124 @@ const decompileCmd = program
     }
   });
 
+// =============================================================================
+// Optimize Commands — Claude Code profile optimization (ADR-139)
+// =============================================================================
+
+const optimizeCmd = program.command('optimize')
+  .description('Optimize Claude Code configuration per task type (ADR-139)')
+  .option('-p, --profile <type>', 'Task profile: coding|research|quickfix|planning|background|swarm|review|ci')
+  .option('-s, --show', 'Show current optimization status')
+  .option('-l, --list', 'List all available profiles')
+  .option('--generate-settings', 'Output optimal .claude/settings.json')
+  .option('--detect <prompt>', 'Auto-detect task type from a prompt')
+  .option('--apply', 'Apply profile env vars to current process (for hooks)')
+  .option('--json', 'JSON output')
+  .action(async (opts) => {
+    let optimizerMod;
+    try {
+      optimizerMod = require('../src/optimizer/index.js');
+    } catch (e) {
+      console.error(chalk.red('Error: Failed to load optimizer module.'));
+      console.error(chalk.dim(`  ${e.message}`));
+      process.exit(1);
+    }
+
+    // --list: show all profiles
+    if (opts.list) {
+      const profiles = optimizerMod.listProfiles();
+      if (opts.json) {
+        const data = {};
+        for (const name of profiles) {
+          data[name] = optimizerMod.getProfile(name);
+        }
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+      console.log(chalk.bold.cyan('\n  RVAgent Optimizer Profiles (ADR-139)\n'));
+      console.log(chalk.dim('  Based on decompiled Claude Code v2.1.91 intelligence\n'));
+      for (const name of profiles) {
+        const p = optimizerMod.getProfile(name);
+        const envCount = Object.keys(p.env).length;
+        console.log(`  ${chalk.bold.white(name.padEnd(12))} ${chalk.dim(p.description)}`);
+        console.log(chalk.dim(`${''.padEnd(14)}Permission: ${p.permissionMode}, Env vars: ${envCount}`));
+      }
+      console.log('');
+      console.log(chalk.dim('  Usage: ruvector optimize --profile <type>'));
+      console.log(chalk.dim('         ruvector optimize --generate-settings --profile coding'));
+      console.log('');
+      return;
+    }
+
+    // --detect: infer task type from prompt
+    if (opts.detect) {
+      const detected = optimizerMod.detectTaskType(opts.detect);
+      if (opts.json) {
+        console.log(JSON.stringify({ prompt: opts.detect, taskType: detected }));
+        return;
+      }
+      console.log(chalk.cyan(`  Detected task type: ${chalk.bold(detected)}`));
+      return;
+    }
+
+    // Determine profile to use
+    const profileName = opts.profile || 'coding';
+    const profile = optimizerMod.getProfile(profileName);
+
+    if (!profile) {
+      console.error(chalk.red(`  Unknown profile: ${profileName}`));
+      console.error(chalk.yellow(`  Available: ${optimizerMod.listProfiles().join(', ')}`));
+      process.exit(1);
+    }
+
+    // --generate-settings: output settings.json
+    if (opts.generateSettings) {
+      const { generateSettings, formatSettings } = require('../src/optimizer/settings-generator.js');
+      const settings = generateSettings({ ...profile, taskType: profileName });
+      if (opts.json) {
+        console.log(formatSettings(settings));
+      } else {
+        console.log(chalk.bold.cyan(`\n  Generated settings.json for profile: ${profileName}\n`));
+        console.log(formatSettings(settings));
+        console.log('');
+        console.log(chalk.dim('  Save to .claude/settings.json to activate.'));
+        console.log('');
+      }
+      return;
+    }
+
+    // --show: display profile details
+    if (opts.show) {
+      if (opts.json) {
+        console.log(JSON.stringify({ profile: profileName, ...profile }, null, 2));
+        return;
+      }
+      console.log(chalk.bold.cyan(`\n  Profile: ${profileName}\n`));
+      console.log(`  ${chalk.dim('Description:')} ${profile.description}`);
+      console.log(`  ${chalk.dim('Permission:')}  ${profile.permissionMode}`);
+      console.log(`  ${chalk.dim('Env vars:')}`);
+      for (const [key, val] of Object.entries(profile.env)) {
+        console.log(`    ${chalk.white(key)}=${chalk.green(val)}`);
+      }
+      console.log('');
+      return;
+    }
+
+    // --apply or default: apply env vars
+    const result = optimizerMod.applyProfile(profileName);
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(chalk.bold.cyan(`\n  Applied profile: ${profileName}`));
+    console.log(chalk.dim(`  ${profile.description}\n`));
+    for (const [key, val] of Object.entries(result.applied)) {
+      console.log(`  ${chalk.green('+')} ${key}=${val}`);
+    }
+    console.log(`\n  ${chalk.dim('Permission mode:')} ${result.permissionMode}`);
+    console.log('');
+  });
+
 program.parse();
 
 
