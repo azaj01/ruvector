@@ -20,37 +20,78 @@ const MODULE_KEYWORDS = {
   'tool-dispatch': [
     'BashTool', 'FileReadTool', 'FileEditTool', 'FileWriteTool',
     'AgentOutputTool', 'WebFetch', 'WebSearch', 'TodoWrite',
-    'NotebookEdit', 'GlobTool', 'GrepTool',
+    'NotebookEdit', 'GlobTool', 'GrepTool', 'ListFilesTool',
+    'SearchTool', 'ReadTool', 'EditTool', 'WriteTool',
+    'tool_use', 'tool_result', 'ToolUse', 'ToolResult',
+    'toolDefinition', 'toolSchema', 'inputSchema',
   ],
   'permission-system': [
     'canUseTool', 'alwaysAllowRules', 'denyWrite',
-    'Permission', 'permission',
+    'Permission', 'permission', 'allowedTools',
+    'permissionMode', 'sandbox', 'allowList', 'denyList',
+    'isAllowed', 'checkPermission', 'grantPermission',
   ],
   'mcp-client': [
     'mcp__', 'McpClient', 'McpServer', 'McpError',
-    'callTool', 'listTools',
+    'callTool', 'listTools', 'McpTransport',
+    'StdioTransport', 'SseTransport', 'StreamableHttp',
+    'mcp_server', 'mcp_client', 'mcpConnection',
   ],
   'streaming-handler': [
     'content_block_delta', 'message_start', 'message_stop',
     'message_delta', 'content_block_start', 'content_block_stop',
     'stream_event', 'text_delta', 'input_json_delta',
+    'StreamEvent', 'onStream', 'streamHandler',
   ],
   'context-manager': [
     'tengu_compact', 'microcompact', 'auto_compact',
     'compact_boundary', 'preCompactTokenCount',
     'postCompactTokenCount', 'compaction',
+    'tokenCount', 'contextWindow', 'maxTokens',
+    'promptCache', 'cacheControl',
   ],
   'agent-loop': [
     'agentLoop', 'mainLoop', 'querySource',
     'toolUseContext', 'systemPrompt',
+    'conversationTurn', 'assistantMessage',
+    'userMessage', 'messageHistory',
+  ],
+  'commands': [
+    'slashCommand', 'registerCommand', 'commandHandler',
+    'parseCommand', '/help', '/clear', '/compact',
+    '/bug', '/init', '/login', '/logout',
+    '/doctor', '/config', '/cost', '/memory',
+  ],
+  'telemetry': [
+    'telemetry', 'Telemetry', 'opentelemetry', 'otel',
+    'datadog', 'perfetto', 'tracing', 'span',
+    'metric_', 'counter_', 'histogram_',
+    'tengu_', 'sentry',
+  ],
+  'config': [
+    'settings', 'Settings', 'configuration',
+    'CLAUDE_', 'environment', 'envVar',
+    'dotenv', 'loadConfig', 'parseConfig',
+  ],
+  'session': [
+    'session', 'Session', 'conversationId',
+    'checkpoint', 'resume', 'restore',
+    'sessionState', 'persistSession',
+  ],
+  'model-provider': [
+    'anthropic', 'Anthropic', 'claude-', 'claude_',
+    'bedrock', 'vertex', 'openai', 'provider',
+    'apiKey', 'modelId', 'modelName',
   ],
 };
 
 // Simple global regex patterns for small, fast extractions.
 const SIMPLE_PATTERNS = {
-  telemetry: /"tengu_[^"]*"/g,
-  commands: /name:"[a-z][-a-z]*",description:"[^"]*"/g,
+  'telemetry-events': /"tengu_[^"]*"/g,
+  'command-defs': /name:"[a-z][-a-z]*",description:"[^"]*"/g,
   'class-hierarchy': /class \w+( extends \w+)?/g,
+  'env-vars': /CLAUDE_[A-Z_]+/g,
+  'api-endpoints': /\/v\d+\/[a-z][-a-z/]*/g,
 };
 
 /**
@@ -80,21 +121,32 @@ function splitStatements(source) {
 
 /**
  * Assign statements to modules based on keyword matching.
+ * Unmatched statements go to _unclassified for 100% coverage.
  */
 function classifyStatements(statements) {
   const modules = {};
+  const unclassified = [];
 
   for (const stmt of statements) {
     if (stmt.length < 10) continue;
 
+    let matched = false;
     for (const [modName, keywords] of Object.entries(MODULE_KEYWORDS)) {
-      const matched = keywords.some((kw) => stmt.includes(kw));
-      if (matched) {
+      if (keywords.some((kw) => stmt.includes(kw))) {
         if (!modules[modName]) modules[modName] = [];
         modules[modName].push(stmt.trim());
+        matched = true;
         break; // first-match wins
       }
     }
+
+    if (!matched) {
+      unclassified.push(stmt.trim());
+    }
+  }
+
+  if (unclassified.length > 0) {
+    modules['uncategorized'] = unclassified;
   }
 
   return modules;

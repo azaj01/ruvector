@@ -2,7 +2,7 @@
 
 ## Project
 
-Deep-dive reverse engineering of the Claude Code CLI (v2.1.90) internal
+Deep-dive reverse engineering of the Claude Code CLI (v2.1.91) internal
 architecture, based on binary analysis, string extraction, pattern matching,
 and configuration schema examination.
 
@@ -41,16 +41,31 @@ This analysis used "agentic jujutsu" -- the tool analyzed itself by:
 | 17 | [Class Hierarchy](./17-class-hierarchy.md) | 1,557 classes, inheritance trees, AppState type, tool registry |
 | 18 | [State Machines](./18-state-machines.md) | Agent loop, permission, session, streaming, MCP, sandbox state machines |
 
-### Extracted Source (RVF files)
+### Extracted Source (v2.1.91)
 
-| File | Module | Confidence |
-|------|--------|------------|
-| [agent-loop.rvf](./extracted/agent-loop.rvf) | Core async generator (s$) | High |
-| [tool-dispatch.rvf](./extracted/tool-dispatch.rvf) | Tool registry and dispatch | High |
-| [permission-system.rvf](./extracted/permission-system.rvf) | Permission checker and sandbox | High |
-| [mcp-client.rvf](./extracted/mcp-client.rvf) | MCP protocol client | High |
-| [context-manager.rvf](./extracted/context-manager.rvf) | Token counting and compaction | High |
-| [streaming-handler.rvf](./extracted/streaming-handler.rvf) | SSE event processing | High |
+Source and RVF cleanly separated. Master RVF: 9,058 vectors.
+
+| Directory | Module | Fragments | Confidence |
+|-----------|--------|-----------|------------|
+| `source/core/` | [agent-loop.js](./extracted/source/core/agent-loop.js) | 77 | High |
+| `source/core/` | [context-manager.js](./extracted/source/core/context-manager.js) | 49 | High |
+| `source/core/` | [streaming-handler.js](./extracted/source/core/streaming-handler.js) | 24 | High |
+| `source/core/` | [session.js](./extracted/source/core/session.js) | 361 | High |
+| `source/tools/` | [tool-dispatch.js](./extracted/source/tools/tool-dispatch.js) | 531 | High |
+| `source/tools/mcp/` | [mcp-client.js](./extracted/source/tools/mcp/mcp-client.js) | 51 | High |
+| `source/permissions/` | [permission-system.js](./extracted/source/permissions/permission-system.js) | 500 | High |
+| `source/config/` | [config.js](./extracted/source/config/config.js) | 473 | High |
+| `source/config/` | [model-provider.js](./extracted/source/config/model-provider.js) | 165 | Medium |
+| `source/config/` | [env-vars.js](./extracted/source/config/env-vars.js) | 223 | Pattern |
+| `source/telemetry/` | [telemetry.js](./extracted/source/telemetry/telemetry.js) | 524 | High |
+| `source/telemetry/` | [telemetry-events.js](./extracted/source/telemetry/telemetry-events.js) | 861 | Pattern |
+| `source/ui/` | [commands.js](./extracted/source/ui/commands.js) | 80 | Medium |
+| `source/ui/` | [command-defs.js](./extracted/source/ui/command-defs.js) | 93 | Pattern |
+| `source/types/` | [class-hierarchy.js](./extracted/source/types/class-hierarchy.js) | 1,467 | Pattern |
+| `source/types/` | [api-endpoints.js](./extracted/source/types/api-endpoints.js) | 52 | Pattern |
+| `source/uncategorized/` | [uncategorized.js](./extracted/source/uncategorized/uncategorized.js) | 3,162 | Low |
+
+RVF containers in `rvf/`: `master.rvf` (all), `core.rvf`, `tools.rvf`, `permissions.rvf`, `config.rvf`, `telemetry.rvf`, etc.
 
 ### Additional Research
 
@@ -62,19 +77,21 @@ This analysis used "agentic jujutsu" -- the tool analyzed itself by:
 
 ### RVF Version Corpus
 
-| Version | Vectors | RVF Size | Bundle |
-|---------|---------|----------|--------|
-| v0.2.x | 300 | 159 KB | 6.9 MB |
-| v1.0.x | 482 | 251 KB | 8.9 MB |
-| v2.0.x | 785 | 405 KB | 10.5 MB |
-| v2.1.x | 2,068 | 1,057 KB | 12.6 MB |
+| Version | Latest | Vectors | RVF Size | Bundle | Classes | Functions | Modules |
+|---------|--------|---------|----------|--------|---------|-----------|---------|
+| v0.2.x | 0.2.126 | 3,375 | 1,731 KB | 6.9 MB | 1,049 | 13,869 | 17 |
+| v1.0.x | 1.0.128 | 4,669 | 2,388 KB | 8.9 MB | 1,390 | 16,593 | 17 |
+| v2.0.x | 2.0.77 | 5,712 | 2,918 KB | 10.5 MB | 1,612 | 20,395 | 17 |
+| v2.1.x | 2.1.91 | 9,058 | 4,617 KB | 12.6 MB | 1,632 | 19,906 | 17 |
 
 ### Tools
 
 | Tool | Description |
 |------|-------------|
+| `scripts/rebuild-all-versions.mjs` | Full rebuild of all version decompilations (Node.js) |
 | `scripts/claude-code-decompile.sh` | CLI decompiler (extract, beautify, split) |
-| `scripts/claude-code-rvf-corpus.sh` | Build RVF containers for all versions |
+| `scripts/claude-code-rvf-corpus.sh` | Build RVF containers for all versions (shell wrapper) |
+| `npm/packages/ruvector/src/decompiler/` | Decompiler library (module-splitter, metrics, witness) |
 | `npx ruvector decompile <package>` | npm CLI decompiler |
 | `examples/decompiler-dashboard/` | Visual explorer (Vite + React) |
 | `crates/ruvector-decompiler/` | Rust decompiler crate (MinCut + AI + witness) |
@@ -131,4 +148,4 @@ Claude Code follows a **plugin-oriented monolith** pattern:
 - Cannot trace exact function boundaries or module structure
 - V8 snapshot region (~100MB) could not be decompiled
 - Some patterns may be from bundled dependencies, not Claude Code itself
-- This analysis reflects v2.1.90; architecture may change between versions
+- This analysis reflects v2.1.91; architecture may change between versions

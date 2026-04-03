@@ -15,55 +15,79 @@ const MODULE_KEYWORDS = {
   'tool-dispatch': [
     'BashTool', 'FileReadTool', 'FileEditTool', 'FileWriteTool',
     'AgentOutputTool', 'WebFetch', 'WebSearch', 'TodoWrite',
-    'NotebookEdit', 'GlobTool', 'GrepTool',
+    'NotebookEdit', 'GlobTool', 'GrepTool', 'ListFilesTool',
+    'SearchTool', 'ReadTool', 'EditTool', 'WriteTool',
+    'tool_use', 'tool_result', 'ToolUse', 'ToolResult',
+    'toolDefinition', 'toolSchema', 'inputSchema',
   ],
   'permission-system': [
     'canUseTool', 'alwaysAllowRules', 'denyWrite',
-    'Permission', 'permission',
+    'Permission', 'permission', 'allowedTools',
+    'permissionMode', 'sandbox', 'allowList', 'denyList',
+    'isAllowed', 'checkPermission', 'grantPermission',
   ],
   'mcp-client': [
     'mcp__', 'McpClient', 'McpServer', 'McpError',
-    'callTool', 'listTools',
+    'callTool', 'listTools', 'McpTransport',
+    'StdioTransport', 'SseTransport', 'StreamableHttp',
+    'mcp_server', 'mcp_client', 'mcpConnection',
   ],
   'streaming-handler': [
     'content_block_delta', 'message_start', 'message_stop',
     'message_delta', 'content_block_start', 'content_block_stop',
     'stream_event', 'text_delta', 'input_json_delta',
+    'StreamEvent', 'onStream', 'streamHandler',
   ],
   'context-manager': [
     'tengu_compact', 'microcompact', 'auto_compact',
     'compact_boundary', 'preCompactTokenCount',
     'postCompactTokenCount', 'compaction',
+    'tokenCount', 'contextWindow', 'maxTokens',
+    'promptCache', 'cacheControl',
   ],
   'agent-loop': [
     'agentLoop', 'mainLoop', 'querySource',
     'toolUseContext', 'systemPrompt',
+    'conversationTurn', 'assistantMessage',
+    'userMessage', 'messageHistory',
   ],
-  'http-handler': [
-    'createServer', 'http.Server', 'express()',
-    'app.get', 'app.post', 'app.use', 'router.get', 'router.post',
-    'req.body', 'res.json', 'res.send', 'res.status',
+  'commands': [
+    'slashCommand', 'registerCommand', 'commandHandler',
+    'parseCommand', '/help', '/clear', '/compact',
+    '/bug', '/init', '/login', '/logout',
+    '/doctor', '/config', '/cost', '/memory',
   ],
-  'database': [
-    'mongoose', 'sequelize', 'knex', 'prisma',
-    'createConnection', 'getConnection',
-    'SELECT', 'INSERT', 'UPDATE', 'DELETE',
+  'telemetry': [
+    'telemetry', 'Telemetry', 'opentelemetry', 'otel',
+    'datadog', 'perfetto', 'tracing', 'span',
+    'metric_', 'counter_', 'histogram_',
+    'tengu_', 'sentry',
   ],
-  'auth': [
-    'jwt', 'jsonwebtoken', 'passport', 'bcrypt',
-    'authenticate', 'authorize', 'token',
+  'config': [
+    'settings', 'Settings', 'configuration',
+    'CLAUDE_', 'environment', 'envVar',
+    'dotenv', 'loadConfig', 'parseConfig',
   ],
-  'error-handling': [
-    'catch', 'throw new Error', 'ErrorBoundary',
-    'handleError', 'errorHandler',
+  'session': [
+    'session', 'Session', 'conversationId',
+    'checkpoint', 'resume', 'restore',
+    'sessionState', 'persistSession',
+  ],
+  'model-provider': [
+    'anthropic', 'Anthropic', 'claude-', 'claude_',
+    'bedrock', 'vertex', 'openai', 'provider',
+    'apiKey', 'modelId', 'modelName',
   ],
 };
 
 // Simple regex patterns for extracting declarations.
+// These provide additional extraction on top of keyword classification.
 const SIMPLE_PATTERNS = {
-  telemetry: /"tengu_[^"]*"/g,
-  commands: /name:"[a-z][-a-z]*",description:"[^"]*"/g,
+  'telemetry-events': /"tengu_[^"]*"/g,
+  'command-defs': /name:"[a-z][-a-z]*",description:"[^"]*"/g,
   'class-hierarchy': /class \w+( extends \w+)?/g,
+  'env-vars': /CLAUDE_[A-Z_]+/g,
+  'api-endpoints': /\/v\d+\/[a-z][-a-z/]*/g,
 };
 
 /**
@@ -191,6 +215,16 @@ function splitModules(source, options = {}) {
   }
 
   const unclassified = classified['_unclassified'] || [];
+
+  // Always include unclassified as a module for 100% coverage
+  if (unclassified.length > 0) {
+    modules.push({
+      name: 'uncategorized',
+      content: unclassified.join(';\n\n'),
+      fragments: unclassified.length,
+      confidence: 0.1,
+    });
+  }
 
   return { modules, unclassified };
 }
