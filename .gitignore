@@ -127,3 +127,4 @@ examples/*/dist/
 
 # Extracted code artifacts
 claude-code-extracted/
+examples/open-claude-code/
