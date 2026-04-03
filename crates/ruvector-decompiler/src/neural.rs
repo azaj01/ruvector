@@ -1,24 +1,35 @@
-//! Neural name inference via ONNX Runtime (behind `neural` feature flag).
+//! Neural name inference via ONNX Runtime or pure-Rust transformer.
 //!
-//! Loads a trained deobfuscation model in ONNX, GGUF, or RVF format and
-//! predicts human-readable names for minified JS identifiers.
+//! When a `.bin` weights file is provided, uses the pure-Rust transformer
+//! encoder from `transformer.rs` (no external dependencies). Falls back to
+//! ONNX Runtime for `.onnx` files.
 
 use std::path::{Path, PathBuf};
 
 use crate::inferrer::{infer_declaration_name, InferenceContext};
 use crate::training::TrainingCorpus;
+use crate::transformer::TransformerEncoder;
 use crate::types::{InferredName, Module};
+
+/// Backend for neural inference.
+enum Backend {
+    /// Pure Rust transformer loaded from `.bin` weights.
+    Transformer(TransformerEncoder),
+    /// ONNX Runtime session (requires `neural` feature).
+    Onnx(std::cell::RefCell<ort::session::Session>),
+    /// Recognized format but no inference available (GGUF/RVF stub).
+    Stub,
+}
 
 /// Neural name inference using a trained deobfuscation model.
 ///
-/// When an ONNX model is loaded, inference runs through ONNX Runtime.
-/// GGUF and RVF formats are validated but inference is a stub pending
-/// RuvLLM integration.
+/// Supports three backends:
+/// - `.bin` — pure-Rust transformer (preferred, always available)
+/// - `.onnx` — ONNX Runtime (requires `neural` feature)
+/// - GGUF/RVF — validated but inference is stubbed pending full support
 pub struct NeuralInferrer {
     model_path: PathBuf,
-    /// Uses `RefCell` so `predict_name` can keep `&self` for the caller.
-    session: Option<std::cell::RefCell<ort::session::Session>>,
-    active: bool,
+    backend: Backend,
 }
 
 impl NeuralInferrer {
@@ -28,8 +39,10 @@ impl NeuralInferrer {
 
     /// Load a deobfuscation model from `path`.
     ///
-    /// Supports `.onnx` (ONNX Runtime), GGUF (`0x46475547`), and
-    /// RVF (`RVF\x01`) formats.
+    /// Format detection:
+    /// - `.bin` → pure-Rust transformer (always available)
+    /// - `.onnx` → ONNX Runtime
+    /// - GGUF (`0x46475547`) or RVF (`RVF\x01`) → stub
     pub fn load(path: &Path) -> Result<Self, crate::error::DecompilerError> {
         if !path.exists() {
             return Err(crate::error::DecompilerError::ModelError(format!(
@@ -38,15 +51,21 @@ impl NeuralInferrer {
             )));
         }
 
-        let is_onnx = path
-            .extension()
-            .map_or(false, |ext| ext.eq_ignore_ascii_case("onnx"));
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-        if is_onnx {
-            return Self::load_onnx(path);
+        match ext.to_ascii_lowercase().as_str() {
+            "bin" => Self::load_transformer(path),
+            "onnx" => Self::load_onnx(path),
+            _ => Self::load_legacy(path),
         }
+    }
 
-        Self::load_legacy(path)
+    fn load_transformer(path: &Path) -> Result<Self, crate::error::DecompilerError> {
+        let encoder = TransformerEncoder::from_weights_bin(path)?;
+        Ok(Self {
+            model_path: path.to_path_buf(),
+            backend: Backend::Transformer(encoder),
+        })
     }
 
     fn load_onnx(path: &Path) -> Result<Self, crate::error::DecompilerError> {
@@ -60,8 +79,7 @@ impl NeuralInferrer {
 
         Ok(Self {
             model_path: path.to_path_buf(),
-            session: Some(std::cell::RefCell::new(session)),
-            active: true,
+            backend: Backend::Onnx(std::cell::RefCell::new(session)),
         })
     }
 
@@ -84,14 +102,13 @@ impl NeuralInferrer {
 
         if !is_gguf && !is_rvf {
             return Err(crate::error::DecompilerError::ModelError(
-                "unrecognized model format (expected ONNX, GGUF, or RVF)".to_string(),
+                "unrecognized model format (expected .bin, .onnx, GGUF, or RVF)".to_string(),
             ));
         }
 
         Ok(Self {
             model_path: path.to_path_buf(),
-            session: None,
-            active: true,
+            backend: Backend::Stub,
         })
     }
 
@@ -101,13 +118,33 @@ impl NeuralInferrer {
         minified: &str,
         context: &InferenceContext,
     ) -> Option<InferredName> {
-        if !self.active {
-            return None;
+        match &self.backend {
+            Backend::Transformer(encoder) => {
+                let ctx_strings: Vec<&str> = context
+                    .string_literals
+                    .iter()
+                    .chain(context.property_accesses.iter())
+                    .map(|s| s.as_str())
+                    .collect();
+                let (predicted, confidence) = encoder.predict(minified, &ctx_strings);
+                if predicted.is_empty() || (confidence as f64) < 0.3 {
+                    return None;
+                }
+                Some(InferredName {
+                    original: minified.to_string(),
+                    inferred: predicted,
+                    confidence: confidence as f64,
+                    evidence: vec![format!(
+                        "pure-Rust transformer prediction (confidence: {confidence:.3})"
+                    )],
+                })
+            }
+            Backend::Onnx(cell) => {
+                let mut session = cell.borrow_mut();
+                Self::run_onnx_inference(&mut session, minified, context)
+            }
+            Backend::Stub => None,
         }
-
-        let cell = self.session.as_ref()?;
-        let mut session = cell.borrow_mut();
-        Self::run_onnx_inference(&mut session, minified, context)
     }
 
     fn run_onnx_inference(
@@ -195,9 +232,9 @@ impl NeuralInferrer {
         })
     }
 
-    /// Whether the neural model is loaded and ready.
+    /// Whether the neural model is loaded and ready for inference.
     pub fn is_active(&self) -> bool {
-        self.active
+        !matches!(self.backend, Backend::Stub)
     }
 
     /// Path to the loaded model file.
@@ -205,9 +242,14 @@ impl NeuralInferrer {
         &self.model_path
     }
 
-    /// Whether the inferrer has a live ONNX session for real inference.
+    /// Whether the inferrer uses the pure-Rust transformer backend.
+    pub fn has_transformer(&self) -> bool {
+        matches!(self.backend, Backend::Transformer(_))
+    }
+
+    /// Whether the inferrer has a live ONNX session.
     pub fn has_onnx_session(&self) -> bool {
-        self.session.is_some()
+        matches!(self.backend, Backend::Onnx(_))
     }
 }
 
