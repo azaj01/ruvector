@@ -338,6 +338,34 @@ impl<const MAX_NODES: usize, const MAX_EDGES: usize> CoherenceGraph<MAX_NODES, M
             })
     }
 
+    /// Decay all edge weights by the given percentage (in basis points).
+    ///
+    /// `decay_bp` = 1000 means decay by 10% per call. Edges whose weight
+    /// falls to zero are automatically pruned. Returns the number of
+    /// edges pruned.
+    ///
+    /// Call once per epoch to prevent stale communication patterns from
+    /// dominating the coherence graph.
+    pub fn decay_weights(&mut self, decay_bp: u16) -> u16 {
+        let mut pruned = 0u16;
+        for i in 0..MAX_EDGES {
+            if !self.edges[i].active {
+                continue;
+            }
+            // Decay: new_weight = weight * (10000 - decay_bp) / 10000
+            let w = self.edges[i].weight;
+            let factor = 10_000u64.saturating_sub(decay_bp as u64);
+            let new_w = w.saturating_mul(factor) / 10_000;
+            if new_w == 0 {
+                self.remove_edge_by_index(i as EdgeIdx);
+                pruned += 1;
+            } else {
+                self.edges[i].weight = new_w;
+            }
+        }
+        pruned
+    }
+
     /// Allocate a free edge slot.
     fn alloc_edge(&self) -> Result<EdgeIdx, GraphError> {
         for (i, e) in self.edges.iter().enumerate() {
@@ -528,5 +556,58 @@ mod tests {
         g.add_node(pid(2)).unwrap();
         let e = g.add_edge(pid(1), pid(2), 42).unwrap();
         assert_eq!(g.edge_endpoints(e), Some((pid(1), pid(2))));
+    }
+
+    #[test]
+    fn decay_weights_reduces_values() {
+        let mut g = CoherenceGraph::<8, 16>::new();
+        g.add_node(pid(1)).unwrap();
+        g.add_node(pid(2)).unwrap();
+        g.add_edge(pid(1), pid(2), 1000).unwrap();
+
+        // 10% decay
+        let pruned = g.decay_weights(1000);
+        assert_eq!(pruned, 0);
+        // 1000 * 0.9 = 900
+        assert_eq!(g.edge_weight_between(pid(1), pid(2)), 900);
+    }
+
+    #[test]
+    fn decay_prunes_zero_weight_edges() {
+        let mut g = CoherenceGraph::<8, 16>::new();
+        g.add_node(pid(1)).unwrap();
+        g.add_node(pid(2)).unwrap();
+        g.add_edge(pid(1), pid(2), 1).unwrap();
+        assert_eq!(g.edge_count(), 1);
+
+        // 50% decay on weight=1 → 0, should prune.
+        let pruned = g.decay_weights(5000);
+        assert_eq!(pruned, 1);
+        assert_eq!(g.edge_count(), 0);
+    }
+
+    #[test]
+    fn decay_100_percent_prunes_all() {
+        let mut g = CoherenceGraph::<8, 16>::new();
+        g.add_node(pid(1)).unwrap();
+        g.add_node(pid(2)).unwrap();
+        g.add_edge(pid(1), pid(2), 500).unwrap();
+        g.add_edge(pid(2), pid(1), 300).unwrap();
+
+        let pruned = g.decay_weights(10_000); // 100% decay
+        assert_eq!(pruned, 2);
+        assert_eq!(g.edge_count(), 0);
+    }
+
+    #[test]
+    fn decay_zero_is_noop() {
+        let mut g = CoherenceGraph::<8, 16>::new();
+        g.add_node(pid(1)).unwrap();
+        g.add_node(pid(2)).unwrap();
+        g.add_edge(pid(1), pid(2), 1000).unwrap();
+
+        let pruned = g.decay_weights(0);
+        assert_eq!(pruned, 0);
+        assert_eq!(g.edge_weight_between(pid(1), pid(2)), 1000);
     }
 }

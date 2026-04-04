@@ -59,6 +59,21 @@ impl PartitionManager {
             .find(|p| p.id == id)
     }
 
+    /// Mutable look-up of a partition by ID.
+    pub fn get_mut(&mut self, id: PartitionId) -> Option<&mut Partition> {
+        self.partitions
+            .iter_mut()
+            .filter_map(|p| p.as_mut())
+            .find(|p| p.id == id)
+    }
+
+    /// Iterate over all active partition IDs.
+    pub fn active_ids(&self) -> impl Iterator<Item = PartitionId> + '_ {
+        self.partitions
+            .iter()
+            .filter_map(|p| p.as_ref().map(|p| p.id))
+    }
+
     /// Return the number of active partitions.
     #[must_use]
     pub fn count(&self) -> usize {

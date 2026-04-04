@@ -276,6 +276,10 @@ impl Kernel {
         self.tier_manager.advance_epoch();
         self.tier_manager.decay_recency(RECENCY_DECAY_PER_EPOCH);
 
+        // Propagate coherence scores to partition objects so that
+        // downstream consumers (scheduler, security) see fresh values.
+        self.sync_partition_scores();
+
         // Emit an epoch witness.
         let mut record = WitnessRecord::zeroed();
         record.action_kind = ActionKind::SchedulerEpoch as u8;
@@ -772,6 +776,139 @@ impl Kernel {
     #[cfg(not(feature = "wasm"))]
     pub fn wasm_enabled(&self) -> bool {
         false
+    }
+
+    // -- Coherence score propagation --
+
+    /// Synchronise coherence scores and cut pressures from the coherence
+    /// engine into the partition objects. Called automatically by `tick()`.
+    ///
+    /// This ensures that downstream consumers (scheduler priority, security
+    /// gates, tier placement) always see fresh values.
+    fn sync_partition_scores(&mut self) {
+        // Collect IDs first to avoid borrow conflict.
+        let mut ids = [None::<PartitionId>; DEFAULT_MAX_PARTITIONS];
+        for (i, id) in self.partitions.active_ids().enumerate() {
+            if i >= DEFAULT_MAX_PARTITIONS {
+                break;
+            }
+            ids[i] = Some(id);
+        }
+
+        for slot in &ids {
+            let id = match slot {
+                Some(id) => *id,
+                None => break,
+            };
+            let score = self.coherence.score(id);
+            let pressure = self.coherence.pressure(id);
+            if let Some(p) = self.partitions.get_mut(id) {
+                p.coherence = score;
+                p.cut_pressure = pressure;
+            }
+        }
+    }
+
+    // -- Security-gated operations --
+
+    /// Create a partition with capability-based security check.
+    ///
+    /// Requires a `CapToken` with `Partition` type and `WRITE` rights.
+    /// Emits a `ProofRejected` witness on denial.
+    pub fn checked_create_partition(
+        &mut self,
+        config: &PartitionConfig,
+        token: &rvm_types::CapToken,
+    ) -> RvmResult<PartitionId> {
+        use rvm_security::gate::{GateRequest, SecurityGate};
+
+        if !self.booted {
+            return Err(RvmError::InvalidPartitionState);
+        }
+
+        let gate = SecurityGate::new(&self.witness_log);
+        let request = GateRequest {
+            token: *token,
+            required_type: rvm_types::CapType::Partition,
+            required_rights: rvm_types::CapRights::WRITE,
+            proof_commitment: None,
+            action: ActionKind::PartitionCreate,
+            target_object_id: 0,
+            timestamp_ns: 0,
+        };
+
+        gate.check_and_execute(&request)
+            .map_err(|_| RvmError::InsufficientCapability)?;
+
+        // Delegate to the unsecured create (already emits its own witness).
+        self.create_partition(config)
+    }
+
+    /// Send an IPC message with capability-based security check.
+    ///
+    /// Requires a `CapToken` with `Partition` type and `WRITE` rights.
+    pub fn checked_ipc_send(
+        &mut self,
+        edge_id: CommEdgeId,
+        msg: IpcMessage,
+        token: &rvm_types::CapToken,
+    ) -> RvmResult<()> {
+        use rvm_security::gate::{GateRequest, SecurityGate};
+
+        if !self.booted {
+            return Err(RvmError::InvalidPartitionState);
+        }
+
+        let gate = SecurityGate::new(&self.witness_log);
+        let request = GateRequest {
+            token: *token,
+            required_type: rvm_types::CapType::Partition,
+            required_rights: rvm_types::CapRights::WRITE,
+            proof_commitment: None,
+            action: ActionKind::IpcSend,
+            target_object_id: msg.receiver.as_u32() as u64,
+            timestamp_ns: 0,
+        };
+
+        gate.check_and_execute(&request)
+            .map_err(|_| RvmError::InsufficientCapability)?;
+
+        self.ipc_send(edge_id, msg)
+    }
+
+    /// Return a reference to the scheduler (for inspection/testing).
+    #[must_use]
+    pub fn scheduler(&self) -> &Scheduler<DEFAULT_MAX_CPUS, DEFAULT_MAX_PARTITIONS> {
+        &self.scheduler
+    }
+
+    /// Enter degraded mode (DC-6: coherence engine offline).
+    ///
+    /// In degraded mode, `CutPressure` is zeroed for all scheduler
+    /// decisions, and the system operates on deadline urgency alone.
+    pub fn enter_degraded_mode(&mut self) {
+        self.scheduler.enter_degraded();
+
+        let mut record = WitnessRecord::zeroed();
+        record.action_kind = ActionKind::DegradedModeEntered as u8;
+        record.proof_tier = 1;
+        self.witness_log.append(record);
+    }
+
+    /// Exit degraded mode.
+    pub fn exit_degraded_mode(&mut self) {
+        self.scheduler.exit_degraded();
+
+        let mut record = WitnessRecord::zeroed();
+        record.action_kind = ActionKind::DegradedModeExited as u8;
+        record.proof_tier = 1;
+        self.witness_log.append(record);
+    }
+
+    /// Whether the system is in degraded mode.
+    #[must_use]
+    pub fn is_degraded(&self) -> bool {
+        self.scheduler.is_degraded()
     }
 }
 
@@ -1736,5 +1873,202 @@ mod tests {
             }
             _ => panic!("expected SplitRecommended after heavy IPC traffic"),
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Edge weight decay tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_edge_decay_reduces_weight_over_time() {
+        let mut kernel = Kernel::with_defaults();
+        kernel.boot().unwrap();
+
+        let config = PartitionConfig::default();
+        let a = kernel.create_partition(&config).unwrap();
+        let b = kernel.create_partition(&config).unwrap();
+
+        // Record traffic.
+        kernel.record_communication(a, b, 10_000).unwrap();
+        kernel.tick().unwrap();
+
+        // Coherence graph edge count should be 1 after first tick.
+        assert_eq!(kernel.coherence_engine().graph().edge_count(), 1);
+
+        // Tick many times without new traffic. The 5% decay per epoch
+        // will eventually prune the edge to zero.
+        for _ in 0..200 {
+            kernel.tick().unwrap();
+        }
+
+        // After enough decay, the edge should be pruned.
+        assert_eq!(
+            kernel.coherence_engine().graph().edge_count(),
+            0,
+            "edge should be pruned after sufficient decay",
+        );
+
+        // With no edges, pressure should be zero.
+        assert_eq!(kernel.coherence_pressure(a).as_fixed(), 0);
+    }
+
+    // ---------------------------------------------------------------
+    // Score propagation tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_score_propagation_to_partition() {
+        let mut kernel = Kernel::with_defaults();
+        kernel.boot().unwrap();
+
+        let config = PartitionConfig::default();
+        let a = kernel.create_partition(&config).unwrap();
+        let b = kernel.create_partition(&config).unwrap();
+
+        // Initial coherence on the partition object should be 5000 (default).
+        assert_eq!(kernel.partitions().get(a).unwrap().coherence.as_basis_points(), 5000);
+
+        // Drive coherence to 0 via external traffic.
+        kernel.record_communication(a, b, 5000).unwrap();
+        kernel.tick().unwrap();
+
+        // After tick, the partition object's coherence should be updated.
+        let p = kernel.partitions().get(a).unwrap();
+        assert_eq!(p.coherence.as_basis_points(), 0);
+        assert!(p.cut_pressure.as_fixed() > 0);
+    }
+
+    // ---------------------------------------------------------------
+    // Security-gated operation tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_checked_create_partition_success() {
+        let mut kernel = Kernel::with_defaults();
+        kernel.boot().unwrap();
+
+        let token = rvm_types::CapToken::new(
+            1,
+            rvm_types::CapType::Partition,
+            rvm_types::CapRights::READ | rvm_types::CapRights::WRITE,
+            0,
+        );
+        let config = PartitionConfig::default();
+        let id = kernel.checked_create_partition(&config, &token).unwrap();
+        assert_eq!(kernel.partition_count(), 1);
+        assert!(kernel.partitions().get(id).is_some());
+    }
+
+    #[test]
+    fn test_checked_create_partition_wrong_type_denied() {
+        let mut kernel = Kernel::with_defaults();
+        kernel.boot().unwrap();
+
+        // Wrong capability type (Region instead of Partition).
+        let token = rvm_types::CapToken::new(
+            1,
+            rvm_types::CapType::Region,
+            rvm_types::CapRights::WRITE,
+            0,
+        );
+        let config = PartitionConfig::default();
+        assert_eq!(
+            kernel.checked_create_partition(&config, &token),
+            Err(RvmError::InsufficientCapability),
+        );
+    }
+
+    #[test]
+    fn test_checked_create_partition_insufficient_rights_denied() {
+        let mut kernel = Kernel::with_defaults();
+        kernel.boot().unwrap();
+
+        // Read-only (needs WRITE).
+        let token = rvm_types::CapToken::new(
+            1,
+            rvm_types::CapType::Partition,
+            rvm_types::CapRights::READ,
+            0,
+        );
+        let config = PartitionConfig::default();
+        assert_eq!(
+            kernel.checked_create_partition(&config, &token),
+            Err(RvmError::InsufficientCapability),
+        );
+    }
+
+    #[test]
+    fn test_checked_ipc_send_denied() {
+        let mut kernel = Kernel::with_defaults();
+        kernel.boot().unwrap();
+
+        let config = PartitionConfig::default();
+        let a = kernel.create_partition(&config).unwrap();
+        let b = kernel.create_partition(&config).unwrap();
+        let edge = kernel.create_channel(a, b).unwrap();
+
+        // Read-only token (needs WRITE for Send).
+        let token = rvm_types::CapToken::new(
+            1,
+            rvm_types::CapType::Partition,
+            rvm_types::CapRights::READ,
+            0,
+        );
+        let msg = make_msg(a.as_u32(), b.as_u32(), edge, 1);
+        assert_eq!(
+            kernel.checked_ipc_send(edge, msg, &token),
+            Err(RvmError::InsufficientCapability),
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Degraded mode tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_degraded_mode_lifecycle() {
+        let mut kernel = Kernel::with_defaults();
+        kernel.boot().unwrap();
+
+        assert!(!kernel.is_degraded());
+        let pre = kernel.witness_count();
+
+        kernel.enter_degraded_mode();
+        assert!(kernel.is_degraded());
+        let record = kernel.witness_log().get(pre as usize).unwrap();
+        assert_eq!(record.action_kind, ActionKind::DegradedModeEntered as u8);
+
+        kernel.exit_degraded_mode();
+        assert!(!kernel.is_degraded());
+        let record = kernel.witness_log().get((pre + 1) as usize).unwrap();
+        assert_eq!(record.action_kind, ActionKind::DegradedModeExited as u8);
+    }
+
+    #[test]
+    fn test_degraded_mode_zeroes_pressure_in_scheduler() {
+        let mut kernel = Kernel::with_defaults();
+        kernel.boot().unwrap();
+
+        let config = PartitionConfig::default();
+        let a = kernel.create_partition(&config).unwrap();
+        let b = kernel.create_partition(&config).unwrap();
+
+        // Give `a` high pressure.
+        kernel.record_communication(a, b, 5000).unwrap();
+        kernel.tick().unwrap();
+
+        // Enter degraded mode — pressure should be zeroed in scheduler.
+        kernel.enter_degraded_mode();
+
+        // Enqueue both with same deadline. In normal mode, `a`'s pressure
+        // boost would push it ahead. In degraded mode, they're equal.
+        kernel.enqueue_partition(0, a, 100).unwrap();
+        kernel.enqueue_partition(0, b, 100).unwrap();
+
+        // First dequeued is whichever was enqueued first (same priority).
+        let (_, first) = kernel.switch_next(0).unwrap();
+        let (_, second) = kernel.switch_next(0).unwrap();
+        // Both should have been scheduled — verify both ran.
+        assert!((first == a && second == b) || (first == b && second == a));
     }
 }

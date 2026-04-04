@@ -257,8 +257,21 @@ impl<MCB: MinCutBackend, CB: CoherenceBackend> CoherenceEngine<MCB, CB> {
     /// Consults the adaptive engine to decide whether to recompute
     /// coherence scores and cut pressures. Returns the strongest
     /// split or merge recommendation found, or `NoAction`.
+    /// Edge weight decay rate per epoch (basis points). 500 = 5% decay.
+    const EDGE_DECAY_BP: u16 = 500;
+
+    /// Advance one epoch.
+    ///
+    /// Decays edge weights by 5% per epoch to prevent stale communication
+    /// patterns from dominating. Then consults the adaptive engine to
+    /// decide whether to recompute scores and pressures. Returns the
+    /// strongest split or merge recommendation, or `NoAction`.
     pub fn tick(&mut self, cpu_load_percent: u8) -> CoherenceDecision {
         self.epoch = self.epoch.wrapping_add(1);
+
+        // Decay edge weights each epoch to prevent stale communication
+        // patterns from dominating the graph.
+        self.graph.decay_weights(Self::EDGE_DECAY_BP);
 
         let should_recompute = self.adaptive.tick(cpu_load_percent);
         if !should_recompute {
