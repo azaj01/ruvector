@@ -165,7 +165,7 @@ Layer 0: Machine Entry (assembly, <500 LoC)
 | `rvm-hal` | Platform-agnostic hardware abstraction traits (MMU, timer, interrupts) |
 | `rvm-cap` | Capability-based access control with derivation trees and three-tier proof |
 | `rvm-witness` | Append-only witness trail with hash-chain integrity |
-| `rvm-proof` | Proof-gated state transitions (P1/P2/P3 tiers) |
+| `rvm-proof` | Proof-gated state transitions (P1/P2/P3 tiers), TEE pipeline, cryptographic signers (Ed25519, HMAC-SHA256) |
 | `rvm-partition` | Partition lifecycle, split/merge, capability tables, communication edges |
 | `rvm-sched` | Coherence-weighted 2-signal scheduler (deadline urgency + cut pressure) |
 | `rvm-memory` | Guest physical address space management with tiered placement |
@@ -266,15 +266,15 @@ Run `cargo bench` for full criterion results with HTML reports.
 | `rvm-types` | ~40 types | 64-byte `WitnessRecord` (compile-time asserted), ~40 `ActionKind` variants, 34 error variants |
 | `rvm-hal` | 16 | AArch64 EL2: stage-2 page tables, PL011 UART, GICv2, ARM generic timer |
 | `rvm-cap` | 40 | Constant-time P1, nonce ring (4096 + watermark), P3 derivation chain verification, epoch revocation |
-| `rvm-witness` | 29 | FNV-1a hash chain, 16MB ring buffer, `StrictSigner`, RLE-compressed replay |
-| `rvm-proof` | 45 | Proof engine, context builder, constant-time P2 (all 6 rules), P3 chain delegation |
+| `rvm-witness` | 29 | SHA-256 hash chain (FNV-1a fallback), HMAC-SHA256 signing, 16MB ring buffer, `StrictSigner`, RLE-compressed replay |
+| `rvm-proof` | 45 | Proof engine, context builder, constant-time P2 (all 6 rules), P3 deep verification (SHA-256 + Merkle + WitnessSigner), TEE pipeline, Ed25519/HMAC-SHA256/DualHmac signers |
 | `rvm-partition` | 86 | Lifecycle state machine, IPC message queues, device leases, scored split/merge, `remove()` |
 | `rvm-sched` | 49 | 2-signal priority, SMP coordinator, VMID-aware switch, `SwitchContext::init()`, degraded fallback |
 | `rvm-memory` | 110 | Buddy allocator with coalescing, 4-tier management, LZ4-style RLE compression, reconstruction |
 | `rvm-coherence` | 59 | Unified coherence engine, pluggable MinCut/Coherence backends, edge decay, bridge to ruvector |
 | `rvm-boot` | 26 | 7-phase measured boot, attestation digest, HAL init, entry point |
 | `rvm-wasm` | 33 | 7-state agent lifecycle, `HostContext` trait, section parser (13 section types), migration |
-| `rvm-security` | 45 | Unified security gate (P1/P2/P3), input validation, attestation chain, DMA budget |
+| `rvm-security` | 45 | Unified security gate (P1/P2/P3), `SignedSecurityGate` with per-link signature verification, input validation, attestation chain, DMA budget |
 | `rvm-kernel` | 62 | Full integration: IPC→coherence, scheduler, split/merge, security gates, degraded mode, device leases, tier mgmt |
 | **Integration** | 48 | 17 e2e scenarios: agent lifecycle, split pressure, memory tiers, cap chain, boot timing |
 | **Benchmarks** | 21 | Criterion benchmarks for all performance-critical paths |
@@ -333,7 +333,7 @@ RVM explicitly rejects demand paging. Dormant memory is stored as `witness check
 Every state mutation requires a valid proof token verified through a three-tier system: P1 capability (<1µs), P2 policy (<100µs), P3 deep derivation chain verification (walks tree to root, validates ancestor integrity + epoch monotonicity).
 
 ### 4. Witness-Native OS
-Every privileged action emits a fixed 64-byte, FNV-1a hash-chained record. Tamper-evident by construction. Full deterministic replay from any checkpoint.
+Every privileged action emits a fixed 64-byte, SHA-256 hash-chained record with HMAC-SHA256 signatures. Tamper-evident by construction. Full deterministic replay from any checkpoint.
 
 ### 5. Live Partition Split/Merge
 Partitions split along graph-theoretic cut boundaries and merge when coherence rises. Capabilities follow ownership (DC-8), regions use weighted scoring (DC-9), merges require 7 preconditions (DC-11).
@@ -420,6 +420,7 @@ Capability-based isolation, proof-gated execution, and witness attestation on mi
 | ADR-139 | Appliance deployment model |
 | ADR-140 | Agent runtime adapter |
 | ADR-141 | Coherence engine kernel integration and runtime pipeline |
+| ADR-142 | TEE-backed cryptographic verification (SHA-256, Ed25519, HMAC-SHA256, TEE pipeline) |
 
 </details>
 

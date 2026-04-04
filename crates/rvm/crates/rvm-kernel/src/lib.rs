@@ -87,6 +87,71 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CRATE_COUNT: usize = 13;
 
 // ---------------------------------------------------------------------------
+// Signer bridge (ADR-142 Phase 4)
+// ---------------------------------------------------------------------------
+
+/// Bridges the 64-byte proof-crate [`rvm_proof::WitnessSigner`] to the
+/// 8-byte witness-crate [`rvm_witness::WitnessSigner`].
+///
+/// The proof crate defines a signer trait that operates on 32-byte digests
+/// and produces 64-byte signatures. The witness crate defines a signer
+/// trait that operates on `WitnessRecord` and produces 8-byte signatures
+/// (for the `aux` field). This adapter bridges the two by:
+///
+/// 1. Computing a SHA-256 digest of the witness record's content fields.
+/// 2. Signing the digest with the inner 64-byte signer.
+/// 3. Truncating the result to 8 bytes for the `aux` field.
+///
+/// Verification recomputes the truncated signature and performs a
+/// constant-time comparison.
+pub mod signer_bridge {
+    use rvm_types::WitnessRecord;
+
+    /// Adapter that wraps a 64-byte [`rvm_proof::WitnessSigner`] and
+    /// implements the 8-byte [`rvm_witness::WitnessSigner`].
+    pub struct CryptoSignerAdapter<S: rvm_proof::WitnessSigner> {
+        inner: S,
+    }
+
+    impl<S: rvm_proof::WitnessSigner> CryptoSignerAdapter<S> {
+        /// Create a new adapter wrapping the given proof-crate signer.
+        pub const fn new(inner: S) -> Self {
+            Self { inner }
+        }
+
+        /// Return a reference to the inner proof-crate signer.
+        pub fn inner(&self) -> &S {
+            &self.inner
+        }
+    }
+
+    #[cfg(feature = "crypto-sha256")]
+    impl<S: rvm_proof::WitnessSigner> rvm_witness::WitnessSigner for CryptoSignerAdapter<S> {
+        fn sign(&self, record: &WitnessRecord) -> [u8; 8] {
+            let digest = rvm_witness::record_to_digest(record);
+            let sig64 = self.inner.sign(&digest);
+            let mut aux = [0u8; 8];
+            aux.copy_from_slice(&sig64[..8]);
+            aux
+        }
+
+        fn verify(&self, record: &WitnessRecord) -> bool {
+            let expected = self.sign(record);
+            // Constant-time comparison.
+            let mut diff = 0u8;
+            let mut i = 0;
+            while i < 8 {
+                diff |= expected[i] ^ record.aux[i];
+                i += 1;
+            }
+            diff == 0
+        }
+    }
+}
+
+pub use signer_bridge::CryptoSignerAdapter;
+
+// ---------------------------------------------------------------------------
 // Kernel integration struct
 // ---------------------------------------------------------------------------
 
@@ -625,17 +690,25 @@ impl Kernel {
 
     /// Send an IPC message on an existing channel.
     ///
+    /// `caller_id` is the partition performing the send; this is forwarded
+    /// to the IPC manager for sender-identity verification.
+    ///
     /// Automatically increments the coherence graph edge weight for the
-    /// sender→receiver pair, feeding the mincut/split/merge decisions.
+    /// sender->receiver pair, feeding the mincut/split/merge decisions.
     /// Emits an `IpcSend` witness record.
-    pub fn ipc_send(&mut self, edge_id: CommEdgeId, msg: IpcMessage) -> RvmResult<()> {
+    pub fn ipc_send(
+        &mut self,
+        edge_id: CommEdgeId,
+        msg: IpcMessage,
+        caller_id: PartitionId,
+    ) -> RvmResult<()> {
         if !self.booted {
             return Err(RvmError::InvalidPartitionState);
         }
         let sender = msg.sender;
         let receiver = msg.receiver;
 
-        self.ipc.send(edge_id, msg)?;
+        self.ipc.send(edge_id, msg, caller_id)?;
 
         // Feed the coherence graph: each message increments edge weight
         // by 1 (the IPC manager also tracks its own cumulative weight).
@@ -906,6 +979,7 @@ impl Kernel {
             proof_commitment: None,
             require_p3: false,
             p3_chain_valid: false,
+            p3_witness_data: None,
             action: ActionKind::PartitionCreate,
             target_object_id: 0,
             timestamp_ns: 0,
@@ -941,6 +1015,7 @@ impl Kernel {
             proof_commitment: None,
             require_p3: false,
             p3_chain_valid: false,
+            p3_witness_data: None,
             action: ActionKind::IpcSend,
             target_object_id: msg.receiver.as_u32() as u64,
             timestamp_ns: 0,
@@ -949,7 +1024,8 @@ impl Kernel {
         gate.check_and_execute(&request)
             .map_err(|_| RvmError::InsufficientCapability)?;
 
-        self.ipc_send(edge_id, msg)
+        let caller = msg.sender;
+        self.ipc_send(edge_id, msg, caller)
     }
 
     /// Return a reference to the scheduler (for inspection/testing).
@@ -1011,18 +1087,38 @@ pub struct KernelHostContext<'a> {
 impl<'a> rvm_wasm::host_functions::HostContext for KernelHostContext<'a> {
     fn send(&mut self, _sender: rvm_wasm::agent::AgentId, target: u64, length: u64) -> RvmResult<u64> {
         let edge = self.active_channel.ok_or(RvmError::PartitionNotFound)?;
+
+        // Checked truncation: reject if target overflows u32.
+        if target > u32::MAX as u64 {
+            return Err(RvmError::ResourceLimitExceeded);
+        }
+        let target_u32 = target as u32;
+
+        // Validate target is not the hypervisor (0) and not self-send.
+        if target_u32 == 0 {
+            return Err(RvmError::InsufficientCapability);
+        }
+        if target_u32 == self.partition.as_u32() {
+            return Err(RvmError::InsufficientCapability);
+        }
+
+        // Validate payload length: reject if it would overflow u16.
+        if length > u16::MAX as u64 {
+            return Err(RvmError::ResourceLimitExceeded);
+        }
+
         let seq = self.next_sequence;
-        self.next_sequence += 1;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
         let msg = IpcMessage {
             sender: self.partition,
-            receiver: PartitionId::new(target as u32),
+            receiver: PartitionId::new(target_u32),
             edge_id: edge,
             payload_len: length as u16,
             msg_type: 0,
             sequence: seq,
             capability_hash: 0,
         };
-        self.ipc.send(edge, msg)?;
+        self.ipc.send(edge, msg, self.partition)?;
         Ok(length)
     }
 
@@ -1770,7 +1866,7 @@ mod tests {
         assert_eq!(kernel.ipc_channel_count(), 1);
 
         let msg = make_msg(a.as_u32(), b.as_u32(), edge, 1);
-        kernel.ipc_send(edge, msg).unwrap();
+        kernel.ipc_send(edge, msg, a).unwrap();
 
         let received = kernel.ipc_receive(edge).unwrap().unwrap();
         assert_eq!(received.sequence, 1);
@@ -1790,7 +1886,7 @@ mod tests {
         // Send multiple messages to build up edge weight.
         for seq in 1..=10 {
             let msg = make_msg(a.as_u32(), b.as_u32(), edge, seq);
-            kernel.ipc_send(edge, msg).unwrap();
+            kernel.ipc_send(edge, msg, a).unwrap();
         }
 
         // After tick, coherence should reflect the traffic.
@@ -1818,7 +1914,7 @@ mod tests {
 
         let pre_send = kernel.witness_count();
         let msg = make_msg(a.as_u32(), b.as_u32(), edge, 1);
-        kernel.ipc_send(edge, msg).unwrap();
+        kernel.ipc_send(edge, msg, a).unwrap();
         let record = kernel.witness_log().get(pre_send as usize).unwrap();
         assert_eq!(record.action_kind, ActionKind::IpcSend as u8);
 
@@ -1961,7 +2057,7 @@ mod tests {
         let edge = kernel.create_channel(a, b).unwrap();
         for seq in 1..=16 {
             let msg = make_msg(a.as_u32(), b.as_u32(), edge, seq);
-            kernel.ipc_send(edge, msg).unwrap();
+            kernel.ipc_send(edge, msg, a).unwrap();
         }
 
         // Tick → coherence recompute → split recommendation.
@@ -2189,5 +2285,102 @@ mod tests {
         let (_, second) = kernel.switch_next(0).unwrap();
         // Both should have been scheduled — verify both ran.
         assert!((first == a && second == b) || (first == b && second == a));
+    }
+
+    // -- CryptoSignerAdapter tests (ADR-142 Phase 4) -----------------------
+
+    #[cfg(feature = "crypto-sha256")]
+    mod signer_bridge_tests {
+        use super::*;
+        use crate::signer_bridge::CryptoSignerAdapter;
+        use rvm_proof::HmacSha256WitnessSigner;
+        use rvm_witness::WitnessSigner as WitnessSignerTrait;
+
+        fn test_key() -> [u8; 32] {
+            let mut key = [0u8; 32];
+            #[allow(clippy::cast_possible_truncation)]
+            for (i, byte) in key.iter_mut().enumerate() {
+                *byte = (i as u8).wrapping_mul(0x37).wrapping_add(0x42);
+            }
+            key
+        }
+
+        #[test]
+        fn adapter_sign_returns_nonzero() {
+            let inner = HmacSha256WitnessSigner::new(test_key());
+            let adapter = CryptoSignerAdapter::new(inner);
+
+            let mut record = WitnessRecord::zeroed();
+            record.sequence = 42;
+            record.action_kind = 0x01;
+
+            let sig = adapter.sign(&record);
+            assert_ne!(sig, [0u8; 8]);
+        }
+
+        #[test]
+        fn adapter_verify_round_trip() {
+            let inner = HmacSha256WitnessSigner::new(test_key());
+            let adapter = CryptoSignerAdapter::new(inner);
+
+            let mut record = WitnessRecord::zeroed();
+            record.sequence = 100;
+            record.timestamp_ns = 1_000_000;
+            record.action_kind = 0x10;
+            record.proof_tier = 3;
+            record.actor_partition_id = 3;
+            record.target_object_id = 99;
+            record.capability_hash = 0xDEAD;
+            record.prev_hash = 0x1234;
+            record.record_hash = 0x5678;
+
+            let sig = adapter.sign(&record);
+            record.aux = sig;
+            assert!(adapter.verify(&record));
+        }
+
+        #[test]
+        fn adapter_tampered_record_fails() {
+            let inner = HmacSha256WitnessSigner::new(test_key());
+            let adapter = CryptoSignerAdapter::new(inner);
+
+            let mut record = WitnessRecord::zeroed();
+            record.sequence = 100;
+            record.actor_partition_id = 3;
+
+            let sig = adapter.sign(&record);
+            record.aux = sig;
+            record.sequence = 101; // tamper
+            assert!(!adapter.verify(&record));
+        }
+
+        #[test]
+        fn adapter_different_keys_different_sigs() {
+            let a1 = CryptoSignerAdapter::new(HmacSha256WitnessSigner::new([0x11u8; 32]));
+            let a2 = CryptoSignerAdapter::new(HmacSha256WitnessSigner::new([0x22u8; 32]));
+
+            let mut record = WitnessRecord::zeroed();
+            record.sequence = 42;
+
+            assert_ne!(a1.sign(&record), a2.sign(&record));
+        }
+
+        #[test]
+        fn adapter_with_witness_log_signed_append() {
+            let inner = HmacSha256WitnessSigner::new(test_key());
+            let adapter = CryptoSignerAdapter::new(inner);
+            let log = rvm_witness::WitnessLog::<16>::new();
+
+            let mut record = WitnessRecord::zeroed();
+            record.action_kind = ActionKind::PartitionCreate as u8;
+            record.actor_partition_id = 1;
+            record.target_object_id = 100;
+
+            log.signed_append(record, &adapter);
+
+            let stored = log.get(0).unwrap();
+            assert_ne!(stored.aux, [0u8; 8]);
+            assert!(adapter.verify(&stored));
+        }
     }
 }

@@ -216,26 +216,17 @@ impl<MCB: MinCutBackend, CB: CoherenceBackend> CoherenceEngine<MCB, CB> {
     ///
     /// If no edge exists yet, one is created. If an edge already exists,
     /// its weight is incremented by `weight`.
+    ///
+    /// Uses the graph's adjacency-matrix-backed `find_directed_edge` for
+    /// O(1) existence check + O(out-degree) edge lookup instead of the
+    /// previous O(E) scan over all active edges.
     pub fn record_communication(
         &mut self,
         from: PartitionId,
         to: PartitionId,
         weight: u64,
     ) -> Result<(), RvmError> {
-        // Try to find an existing edge from `from` to `to`
-        let mut found_edge = None;
-        for (eidx, from_node, to_node, _w) in self.graph.active_edges() {
-            if let (Some(fpid), Some(tpid)) =
-                (self.graph.partition_at(from_node), self.graph.partition_at(to_node))
-            {
-                if fpid == from && tpid == to {
-                    found_edge = Some(eidx);
-                    break;
-                }
-            }
-        }
-
-        match found_edge {
+        match self.graph.find_directed_edge(from, to) {
             Some(eidx) => {
                 self.graph
                     .update_weight(eidx, weight as i64)

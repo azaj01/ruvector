@@ -136,7 +136,7 @@ impl WasmSectionId {
 }
 
 /// Summary of validated Wasm sections found in a module.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WasmValidationResult {
     /// Number of sections found.
     pub section_count: u16,
@@ -164,6 +164,10 @@ pub struct WasmValidationResult {
 ///
 /// Returns a summary of the sections found.
 pub fn validate_module(bytes: &[u8]) -> RvmResult<WasmValidationResult> {
+    // Enforce maximum module size (DC-7 budget constraint).
+    if bytes.len() > MAX_MODULE_SIZE {
+        return Err(RvmError::ResourceLimitExceeded);
+    }
     if bytes.len() < 8 {
         return Err(RvmError::ProofInvalid);
     }
@@ -245,17 +249,27 @@ pub fn validate_header(bytes: &[u8]) -> RvmResult<()> {
 /// Read a LEB128-encoded u32 from `bytes` starting at `pos`.
 ///
 /// Returns (value, bytes_consumed). Max 5 bytes for u32 LEB128.
+/// Rejects non-canonical (over-long) encodings: on the 5th byte,
+/// only the low 4 bits may be set (bits 28..31 of the u32).
 fn read_leb128_u32(bytes: &[u8], start: usize) -> RvmResult<(u32, usize)> {
     let mut result: u32 = 0;
     let mut shift: u32 = 0;
     let mut pos = start;
 
-    for _ in 0..5 {
+    for i in 0u8..5 {
         if pos >= bytes.len() {
             return Err(RvmError::ProofInvalid);
         }
         let byte = bytes[pos];
         pos += 1;
+
+        // On the 5th byte (i == 4), only the low 4 bits are valid for
+        // a u32 (bits 28..31). Reject non-canonical over-long encodings
+        // where higher bits are set.
+        if i == 4 && byte > 0x0F {
+            return Err(RvmError::ProofInvalid);
+        }
+
         result |= ((byte & 0x7F) as u32) << shift;
         if byte & 0x80 == 0 {
             return Ok((result, pos - start));
@@ -264,4 +278,55 @@ fn read_leb128_u32(bytes: &[u8], start: usize) -> RvmResult<(u32, usize)> {
     }
     // More than 5 bytes for a u32 — invalid.
     Err(RvmError::ProofInvalid)
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate alloc;
+    use alloc::vec;
+    use super::*;
+
+    /// Minimal valid Wasm module: magic + version, no sections.
+    fn minimal_wasm() -> [u8; 8] {
+        [0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]
+    }
+
+    #[test]
+    fn test_validate_module_rejects_oversized() {
+        // Create a module that exceeds MAX_MODULE_SIZE.
+        let mut bytes = vec![0u8; MAX_MODULE_SIZE + 1];
+        // Set valid header so we know it's the size check that fires.
+        bytes[..8].copy_from_slice(&minimal_wasm());
+        assert_eq!(validate_module(&bytes), Err(RvmError::ResourceLimitExceeded));
+    }
+
+    #[test]
+    fn test_validate_module_accepts_at_limit() {
+        // A module of exactly MAX_MODULE_SIZE that is just a valid header
+        // followed by a single Custom section spanning the remainder.
+        let mut bytes = vec![0u8; MAX_MODULE_SIZE];
+        bytes[..8].copy_from_slice(&minimal_wasm());
+
+        // Custom section: id=0, then LEB128 size of remaining payload.
+        // Remaining after header(8) + section_id(1) + size_bytes = MAX - 8.
+        // The payload size is MAX - 8 - 1 - len(leb128).
+        // For MAX_MODULE_SIZE = 1048576, payload = 1048576 - 8 - 1 - 3 = 1048564
+        // LEB128 of 1048564 (0x0FFF74): [0xF4, 0xFE, 0x3F]
+        let payload_size: u32 = (MAX_MODULE_SIZE - 8 - 1 - 3) as u32;
+        bytes[8] = 0x00; // Custom section ID
+        bytes[9] = (payload_size & 0x7F) as u8 | 0x80;
+        bytes[10] = ((payload_size >> 7) & 0x7F) as u8 | 0x80;
+        bytes[11] = ((payload_size >> 14) & 0x7F) as u8;
+
+        let result = validate_module(&bytes);
+        // Should pass the size check. The Custom section is valid (zeroed payload).
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_module_minimal_valid() {
+        let bytes = minimal_wasm();
+        let result = validate_module(&bytes).unwrap();
+        assert_eq!(result.section_count, 0);
+    }
 }

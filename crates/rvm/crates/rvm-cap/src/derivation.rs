@@ -23,6 +23,9 @@ pub struct DerivationNode {
     pub first_child: u32,
     /// Index of the next sibling (or `u32::MAX` if no sibling).
     pub next_sibling: u32,
+    /// Cached parent index for O(1) parent lookup.
+    /// `u32::MAX` means no parent (root node).
+    pub parent_index: u32,
 }
 
 impl DerivationNode {
@@ -36,6 +39,7 @@ impl DerivationNode {
             epoch: 0,
             first_child: u32::MAX,
             next_sibling: u32::MAX,
+            parent_index: u32::MAX,
         }
     }
 
@@ -49,6 +53,7 @@ impl DerivationNode {
             epoch,
             first_child: u32::MAX,
             next_sibling: u32::MAX,
+            parent_index: u32::MAX,
         }
     }
 
@@ -62,6 +67,7 @@ impl DerivationNode {
             epoch,
             first_child: u32::MAX,
             next_sibling: u32::MAX,
+            parent_index: u32::MAX,
         }
     }
 
@@ -155,6 +161,7 @@ impl<const N: usize> DerivationTree<N> {
         // Create child node and link to parent's child list (prepend).
         let mut child = DerivationNode::new_child(depth, epoch);
         child.next_sibling = self.nodes[pidx].first_child;
+        child.parent_index = parent_index;
         self.nodes[pidx].first_child = child_index;
         self.nodes[cidx] = child;
         self.count += 1;
@@ -261,14 +268,13 @@ impl<const N: usize> DerivationTree<N> {
         result
     }
 
-    /// Iteratively revokes a subtree using an explicit stack.
+    /// Find the parent of a given node.
     ///
-    /// Find the parent of a given node by scanning for a node whose
-    /// child chain contains the target index.
+    /// Uses the cached `parent_index` field for O(1) lookup. Falls back
+    /// to O(N) scan if the cached index is stale (should not happen in
+    /// normal operation).
     ///
     /// Returns `None` for root nodes or if the parent is not found.
-    /// O(N) scan — acceptable for P3 verification which runs at most
-    /// `max_depth` times (typically 8).
     #[must_use]
     pub fn find_parent(&self, child_index: u32) -> Option<u32> {
         let cidx = child_index as usize;
@@ -279,7 +285,16 @@ impl<const N: usize> DerivationTree<N> {
         if self.nodes[cidx].depth == 0 {
             return None;
         }
-        // Scan all nodes to find one whose child chain includes child_index.
+        // O(1) fast path via cached parent_index.
+        let pidx = self.nodes[cidx].parent_index;
+        if pidx != u32::MAX {
+            let pi = pidx as usize;
+            if pi < N && self.nodes[pi].is_valid {
+                return Some(pidx);
+            }
+        }
+        // Fallback: scan all nodes to find one whose child chain
+        // includes child_index (handles stale parent_index).
         for i in 0..N {
             if !self.nodes[i].is_valid {
                 continue;

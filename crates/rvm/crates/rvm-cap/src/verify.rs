@@ -42,25 +42,45 @@ pub struct ProofVerifier<const N: usize> {
     current_epoch: u32,
     /// Nonce ring buffer for replay prevention.
     nonce_ring: [u64; NONCE_RING_SIZE],
+    /// Hash-indexed nonce lookup: `nonce_hash[nonce % SIZE]` stores the
+    /// nonce value for O(1) replay detection instead of O(N) linear scan.
+    nonce_hash: [u64; NONCE_RING_SIZE],
     /// Write position in the nonce ring.
     nonce_write_pos: usize,
     /// Monotonic watermark: any nonce below this value is rejected
     /// outright, even if it has fallen off the ring buffer. This
     /// prevents replaying very old nonces after ring eviction.
     nonce_watermark: u64,
+    /// Whether nonce == 0 is allowed to bypass replay checks.
+    ///
+    /// Default is `false` (zero nonce is rejected). Set to `true` only
+    /// for boot-time or backwards-compatible contexts where a sentinel
+    /// nonce is acceptable.
+    allow_zero_nonce: bool,
 }
 
 impl<const N: usize> ProofVerifier<N> {
     /// Creates a new proof verifier with the given epoch.
+    ///
+    /// By default, nonce == 0 is **rejected** (no zero-nonce bypass).
+    /// Use [`set_allow_zero_nonce`](Self::set_allow_zero_nonce) to enable
+    /// the sentinel behaviour for boot-time contexts.
     #[must_use]
     #[allow(clippy::large_stack_arrays)]
     pub const fn new(epoch: u32) -> Self {
         Self {
             current_epoch: epoch,
             nonce_ring: [0u64; NONCE_RING_SIZE],
+            nonce_hash: [0u64; NONCE_RING_SIZE],
             nonce_write_pos: 0,
             nonce_watermark: 0,
+            allow_zero_nonce: false,
         }
+    }
+
+    /// Set whether nonce == 0 is allowed to bypass replay checks.
+    pub fn set_allow_zero_nonce(&mut self, allow: bool) {
+        self.allow_zero_nonce = allow;
     }
 
     /// Updates the current epoch.
@@ -282,19 +302,22 @@ impl<const N: usize> ProofVerifier<N> {
     /// Rejects nonces that are below the monotonic watermark (very old
     /// nonces that have already fallen off the ring) as well as nonces
     /// still present in the ring buffer.
+    ///
+    /// Nonce == 0 is rejected unless `allow_zero_nonce` is set. This
+    /// prevents callers from silently skipping replay protection by
+    /// passing a default/uninitialized nonce value.
     fn check_nonce(&self, nonce: u64) -> bool {
-        // Zero nonce is a sentinel, not subject to replay.
         if nonce == 0 {
-            return true;
+            return self.allow_zero_nonce;
         }
         // Watermark check: reject any nonce below the low-water mark.
         if nonce <= self.nonce_watermark {
             return false;
         }
-        for entry in &self.nonce_ring {
-            if *entry == nonce {
-                return false;
-            }
+        // O(1) hash-indexed lookup instead of linear scan.
+        let hash_slot = (nonce as usize) % NONCE_RING_SIZE;
+        if self.nonce_hash[hash_slot] == nonce {
+            return false;
         }
         true
     }
@@ -305,6 +328,9 @@ impl<const N: usize> ProofVerifier<N> {
             return;
         }
         self.nonce_ring[self.nonce_write_pos] = nonce;
+        // Populate hash index for O(1) lookup.
+        let hash_slot = (nonce as usize) % NONCE_RING_SIZE;
+        self.nonce_hash[hash_slot] = nonce;
         self.nonce_write_pos = (self.nonce_write_pos + 1) % NONCE_RING_SIZE;
         // Advance watermark: the watermark tracks the minimum nonce
         // that was evicted from the ring. When we wrap, the oldest
