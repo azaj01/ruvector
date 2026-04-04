@@ -201,7 +201,7 @@ rvm-types (foundation, no deps)
 # Check (no_std by default)
 cargo check
 
-# Run all 645 tests
+# Run all 648 tests
 cargo test --workspace --lib
 
 # Run 21 criterion benchmarks
@@ -266,19 +266,19 @@ Run `cargo bench` for full criterion results with HTML reports.
 | `rvm-types` | ~40 types | 64-byte `WitnessRecord` (compile-time asserted), ~40 `ActionKind` variants, 34 error variants |
 | `rvm-hal` | 16 | AArch64 EL2: stage-2 page tables, PL011 UART, GICv2, ARM generic timer |
 | `rvm-cap` | 40 | Constant-time P1, nonce ring (4096 + watermark), P3 derivation chain verification, epoch revocation |
-| `rvm-witness` | 23 | FNV-1a hash chain, 16MB ring buffer, `StrictSigner`, RLE-compressed replay |
-| `rvm-proof` | 43 | Proof engine, context builder, constant-time P2 (all 6 rules) |
-| `rvm-partition` | 58 | Lifecycle state machine, IPC message queues, device leases, scored split/merge |
+| `rvm-witness` | 29 | FNV-1a hash chain, 16MB ring buffer, `StrictSigner`, RLE-compressed replay |
+| `rvm-proof` | 45 | Proof engine, context builder, constant-time P2 (all 6 rules), P3 chain delegation |
+| `rvm-partition` | 86 | Lifecycle state machine, IPC message queues, device leases, scored split/merge, `remove()` |
 | `rvm-sched` | 49 | 2-signal priority, SMP coordinator, VMID-aware switch, `SwitchContext::init()`, degraded fallback |
-| `rvm-memory` | 103 | Buddy allocator with coalescing, 4-tier management, RLE compression, reconstruction |
+| `rvm-memory` | 110 | Buddy allocator with coalescing, 4-tier management, LZ4-style RLE compression, reconstruction |
 | `rvm-coherence` | 59 | Unified coherence engine, pluggable MinCut/Coherence backends, edge decay, bridge to ruvector |
-| `rvm-boot` | 26 | 7-phase measured boot, attestation digest, HAL init stubs, entry point |
-| `rvm-wasm` | 33 | 7-state agent lifecycle, `HostContext` trait for real IPC, migration with DC-7 timeout |
-| `rvm-security` | 43 | Unified security gate, input validation, attestation chain, DMA budget |
-| `rvm-kernel` | 62 | Full coherence integration: IPC→graph feeding, scheduler priority, split/merge, security gates, degraded mode, tier management |
+| `rvm-boot` | 26 | 7-phase measured boot, attestation digest, HAL init, entry point |
+| `rvm-wasm` | 33 | 7-state agent lifecycle, `HostContext` trait, section parser (13 section types), migration |
+| `rvm-security` | 45 | Unified security gate (P1/P2/P3), input validation, attestation chain, DMA budget |
+| `rvm-kernel` | 62 | Full integration: IPC→coherence, scheduler, split/merge, security gates, degraded mode, device leases, tier mgmt |
 | **Integration** | 48 | 17 e2e scenarios: agent lifecycle, split pressure, memory tiers, cap chain, boot timing |
 | **Benchmarks** | 21 | Criterion benchmarks for all performance-critical paths |
-| **Total** | **645** | **0 failures, 0 clippy warnings** |
+| **Total** | **648** | **0 failures, 0 clippy warnings** |
 
 ### Security Audit Results
 
