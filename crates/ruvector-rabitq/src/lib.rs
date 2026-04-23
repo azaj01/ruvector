@@ -1,3 +1,7 @@
+#![allow(clippy::manual_div_ceil)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::doc_overindented_list_items)]
+
 //! RaBitQ: Rotation-Based 1-bit Quantization for Approximate Nearest-Neighbor Search
 //!
 //! Motivated by the SIGMOD 2024 algorithm by Jianyang Gao & Cheng Long:

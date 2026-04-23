@@ -1,3 +1,6 @@
+#![allow(clippy::manual_div_ceil)]
+#![allow(clippy::needless_range_loop)]
+
 //! RaBitQ unified benchmark harness — produces the *same-run* recall and
 //! throughput numbers quoted in `README.md` / `BENCHMARK.md`.
 //!
