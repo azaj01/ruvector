@@ -72,6 +72,25 @@ impl RuLake {
         self.cache.stats()
     }
 
+    /// What witness resolves from a `(backend, collection)` pair?
+    /// Useful for diagnostics and cross-backend cache-sharing tests.
+    pub fn cache_witness_of(&self, key: &CacheKey) -> Option<String> {
+        self.cache.witness_of(key)
+    }
+
+    /// How many distinct compressed-index entries live in the cache?
+    /// Smaller than the pointer count when multiple backends share a
+    /// witness.
+    pub fn cache_entry_count(&self) -> usize {
+        self.cache.entry_count()
+    }
+
+    /// How many external pointers currently resolve to this witness?
+    /// Returns 0 for unknown witnesses.
+    pub fn cache_refcount_of(&self, witness: &str) -> u32 {
+        self.cache.refcount_of(witness)
+    }
+
     /// Search a single (backend, collection) pair. Handles cache
     /// miss / staleness transparently.
     pub fn search_one(
@@ -114,35 +133,44 @@ impl RuLake {
         Ok(merged)
     }
 
-    /// Coherence check: consult the backend's generation, re-prime the
-    /// cache if stale or absent. Respects `self.consistency`.
+    /// Coherence check: ask the backend for its current bundle and
+    /// compare its witness with whatever the cache currently points at.
+    ///
+    /// Four cases:
+    ///
+    /// 1. Fast path, Eventual within TTL → skip check entirely.
+    /// 2. Witness matches the cache pointer → hit, nothing to do.
+    /// 3. Witness mismatch, but target witness is already in the
+    ///    entry pool (cached under another pointer) → just move the
+    ///    pointer, zero prime work. This is the cross-backend share.
+    /// 4. Witness not in the pool → pull + prime.
     fn ensure_fresh(&self, key: &CacheKey) -> Result<()> {
-        // Fast path: Eventual mode + within-TTL → skip check.
         if self.cache.can_skip_check(key, self.consistency) {
             self.cache.mark_hit();
             return Ok(());
         }
 
         let backend = self.get_backend(&key.0)?;
-        let current_gen = backend.generation(&key.1)?;
-        let cache_gen = self.cache.generation(key);
+        let bundle = backend.current_bundle(
+            &key.1,
+            self.cache.rotation_seed(),
+            self.cache.rerank_factor(),
+        )?;
+        let target_witness = bundle.rvf_witness.clone();
 
-        match cache_gen {
-            Some(cg) if cg == current_gen => {
-                // Hit — just update the last-checked timestamp so
-                // Eventual-mode TTLs count from here.
-                self.cache.mark_hit();
-                self.cache.touch(key);
-                Ok(())
-            }
-            _ => {
-                // Miss or stale — pull + prime.
-                self.cache.mark_miss();
-                let batch = backend.pull_vectors(&key.1)?;
-                self.cache.prime(key.clone(), batch)?;
-                Ok(())
-            }
+        if self.cache.witness_of(key).as_deref() == Some(target_witness.as_str()) {
+            // Case 2: pointer up-to-date.
+            self.cache.mark_hit();
+            self.cache.touch(key);
+            return Ok(());
         }
+
+        // Cases 3 + 4 are handled in `prime`: it reuses an existing
+        // entry for the target witness if present, or builds a new one.
+        self.cache.mark_miss();
+        let batch = backend.pull_vectors(&key.1)?;
+        self.cache.prime(key.clone(), target_witness, batch)?;
+        Ok(())
     }
 
     fn get_backend(&self, id: &str) -> Result<Arc<dyn BackendAdapter>> {

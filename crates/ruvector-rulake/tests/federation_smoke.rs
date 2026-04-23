@@ -240,6 +240,113 @@ fn cache_hit_is_faster_than_miss() {
 }
 
 #[test]
+fn two_backends_share_cache_when_witness_matches() {
+    // The reviewer's "use RVF witness chain hash as cache-key anchor"
+    // fix: two backends advertising the same logical dataset (same
+    // data_ref, same seed, same rerank, same generation) should share
+    // ONE compressed index in the cache, not build two.
+    //
+    // We use a thin `SharedLocalBackend` shim that overrides
+    // `current_bundle()` to report a shared `data_ref`, so two distinct
+    // `LocalBackend` instances look like two pointers into the same
+    // logical dataset.
+    use ruvector_rulake::{BackendAdapter, Generation, PulledBatch, RuLakeBundle, RuLakeError};
+    use std::sync::RwLock;
+
+    struct SharedLocalBackend {
+        inner: LocalBackend,
+        shared_data_ref: String,
+    }
+    impl BackendAdapter for SharedLocalBackend {
+        fn id(&self) -> &str {
+            self.inner.id()
+        }
+        fn list_collections(&self) -> Result<Vec<String>, RuLakeError> {
+            self.inner.list_collections()
+        }
+        fn pull_vectors(&self, c: &str) -> Result<PulledBatch, RuLakeError> {
+            self.inner.pull_vectors(c)
+        }
+        fn generation(&self, c: &str) -> Result<u64, RuLakeError> {
+            self.inner.generation(c)
+        }
+        fn current_bundle(
+            &self,
+            collection: &str,
+            rotation_seed: u64,
+            rerank_factor: usize,
+        ) -> Result<RuLakeBundle, RuLakeError> {
+            // Both backends report the SAME data_ref → same witness.
+            let batch = self.inner.pull_vectors(collection)?;
+            Ok(RuLakeBundle::new(
+                self.shared_data_ref.clone(),
+                batch.dim,
+                rotation_seed,
+                rerank_factor,
+                Generation::Num(batch.generation),
+            ))
+        }
+    }
+
+    let d = 32;
+    let n = 200;
+    let data = clustered(n, d, 10, 5);
+
+    // Two backends. Both load the SAME data (deterministically — same
+    // seed and same vectors). Both report the same `data_ref`.
+    let a = LocalBackend::new("region-us");
+    a.put_collection("c", d, (0..n as u64).collect(), data.clone())
+        .unwrap();
+    let b = LocalBackend::new("region-eu");
+    b.put_collection("c", d, (0..n as u64).collect(), data.clone())
+        .unwrap();
+
+    // Ensure both have generation=1 so their bundles match exactly.
+    // (put_collection bumps generation from 0 to 1.)
+    let a_shim = Arc::new(SharedLocalBackend {
+        inner: a,
+        shared_data_ref: "gs://shared/dataset.parquet".to_string(),
+    });
+    let b_shim = Arc::new(SharedLocalBackend {
+        inner: b,
+        shared_data_ref: "gs://shared/dataset.parquet".to_string(),
+    });
+
+    // Sanity: the _lock_ is required because BackendAdapter's default
+    // current_bundle() pulls vectors; we don't want the test to be
+    // racy. RwLock is just here to shut the borrow checker up on the
+    // unused field — the real backends are the shims above.
+    let _locked: RwLock<()> = RwLock::new(());
+
+    let lake = RuLake::new(20, 42);
+    lake.register_backend(a_shim).unwrap();
+    lake.register_backend(b_shim).unwrap();
+
+    let q = vec![0.5_f32; d];
+    let _ = lake.search_one("region-us", "c", &q, 5).unwrap();
+    let _ = lake.search_one("region-eu", "c", &q, 5).unwrap();
+
+    let stats = lake.cache_stats();
+    assert_eq!(stats.primes, 1, "second backend should not re-prime");
+    assert_eq!(
+        stats.shared_hits, 1,
+        "second backend should resolve to the shared witness"
+    );
+
+    // Both pointers must exist but they both resolve to the same
+    // witness, so only ONE compressed entry should be in the pool.
+    let wa = lake
+        .cache_witness_of(&("region-us".to_string(), "c".to_string()))
+        .unwrap();
+    let wb = lake
+        .cache_witness_of(&("region-eu".to_string(), "c".to_string()))
+        .unwrap();
+    assert_eq!(wa, wb, "witnesses must match");
+    assert_eq!(lake.cache_entry_count(), 1);
+    assert_eq!(lake.cache_refcount_of(&wa), 2);
+}
+
+#[test]
 fn dimension_mismatch_returns_error() {
     let d = 8;
     let backend = Arc::new(LocalBackend::new("tiny"));

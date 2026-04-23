@@ -57,6 +57,30 @@ pub trait BackendAdapter: Send + Sync {
 
     fn generation(&self, collection: &str) -> Result<u64>;
 
+    /// Produce a [`RuLakeBundle`](crate::RuLakeBundle) describing the
+    /// *current* state of this collection. Default impl synthesizes a
+    /// bundle from `id() + collection + generation()`; real backends
+    /// (Parquet, BigQuery, Iceberg, …) should override with their
+    /// authoritative `data_ref` so two deployments reading the same
+    /// underlying bytes produce the same witness and share the cache.
+    fn current_bundle(
+        &self,
+        collection: &str,
+        rotation_seed: u64,
+        rerank_factor: usize,
+    ) -> Result<crate::RuLakeBundle> {
+        // Needs the dim; default impl does a single pull to get it.
+        // Real backends override to avoid the pull on a hot path.
+        let batch = self.pull_vectors(collection)?;
+        Ok(crate::RuLakeBundle::new(
+            format!("{}://{}", self.id(), collection),
+            batch.dim,
+            rotation_seed,
+            rerank_factor,
+            crate::Generation::Num(batch.generation),
+        ))
+    }
+
     fn supports_pushdown(&self) -> bool {
         false
     }
@@ -212,5 +236,36 @@ impl BackendAdapter for LocalBackend {
                     collection: collection.to_string(),
                 })?;
         Ok(c.generation)
+    }
+
+    /// Override: `LocalBackend` already knows its dim without pulling
+    /// vectors, so synthesize the bundle directly. Tests that rely on
+    /// cache sharing across two backends (same data, different id)
+    /// can set `data_ref_override` below by wrapping `LocalBackend` in
+    /// a thin backend shim; the default uses `"local://{id}/{coll}"`
+    /// so two distinct `LocalBackend` instances never share the cache
+    /// unless explicitly overridden.
+    fn current_bundle(
+        &self,
+        collection: &str,
+        rotation_seed: u64,
+        rerank_factor: usize,
+    ) -> Result<crate::RuLakeBundle> {
+        let inner = self.inner.read().unwrap();
+        let c =
+            inner
+                .collections
+                .get(collection)
+                .ok_or_else(|| RuLakeError::UnknownCollection {
+                    backend: self.id.clone(),
+                    collection: collection.to_string(),
+                })?;
+        Ok(crate::RuLakeBundle::new(
+            format!("local://{}/{}", self.id, collection),
+            c.dim,
+            rotation_seed,
+            rerank_factor,
+            crate::Generation::Num(c.generation),
+        ))
     }
 }
