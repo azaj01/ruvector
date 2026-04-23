@@ -26,25 +26,51 @@ paper reports on SIFT1M, GIST1M, DEEP10M — those remain a follow-up.
 
 ## Headline (n = 100,000, D = 128)
 
-| variant | r@1 | r@10 | r@100 | QPS | mem/MB | lat/ms |
-|---|---:|---:|---:|---:|---:|---:|
-| FlatF32 (exact) | 100.0% | 100.0% | 100.0% | 309 | 50.4 | 3.23 |
-| RaBitQ 1-bit (sym, no rerank) | 2.0% | 8.1% | 27.1% | **1,176** | **5.8** | 0.85 |
-| RaBitQ+ (sym, rerank×5) | 92.0% | 87.9% | 78.1% | 811 | 56.9 | 1.23 |
-| **RaBitQ+ (sym, rerank×20)** | **100.0%** | **100.0%** | **100.0%** | **544** | 56.9 | 1.84 |
-| RaBitQ-Asym (no rerank) | 4.5% | 13.0% | 34.5% | 26 | 5.8 | 38.1 |
-| RaBitQ-Asym (rerank×5) | 99.0% | 95.6% | 87.0% | 22 | 56.9 | 44.8 |
+Numbers after the **SoA + cos-LUT optimization** (commit after `8dbc560d0`).
+The previous AoS version is shown in the "(v1)" column for reference.
+
+| variant | r@1 | r@10 | r@100 | QPS | QPS (v1) | mem/MB | lat/ms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| FlatF32 (exact) | 100.0% | 100.0% | 100.0% | 306 | 309 | 50.4 | 3.27 |
+| RaBitQ 1-bit (sym, no rerank) | 2.0% | 8.1% | 27.1% | **3,639** | 1,176 (3.1×) | **2.4** | 0.28 |
+| RaBitQ+ (sym, rerank×5) | 92.0% | 87.9% | 78.1% | **2,058** | 811 (2.5×) | 53.5 | 0.49 |
+| **RaBitQ+ (sym, rerank×20)** | **100.0%** | **100.0%** | **100.0%** | **957** | 544 (1.76×) | 53.5 | 1.05 |
+| RaBitQ-Asym (no rerank) | 4.5% | 13.0% | 34.5% | 26 | 26 (1.0×) | 2.4 | 38.5 |
+| RaBitQ-Asym (rerank×5) | 99.0% | 95.6% | 87.0% | 26 | 22 (1.2×) | 53.5 | 38.5 |
 
 **Recommended at-scale config:** `RabitqPlusIndex` with `rerank_factor=20` —
-**1.76× over exact flat** at **100 % recall@10 and @100**. rerank×5 is faster
-(2.6× over flat) but drops to 87.9% recall@10 at n=100k (scaling regression
-the shipped version at `f2dbb6efb` did not document).
+**3.13× over exact flat** at **100 % recall@10 and @100** (up from 1.76× in v1).
 
-**Memory:** codes-only is **8.7× smaller** than Flat's f32 storage
-(5.8 MB vs 50.4 MB for the rotation matrix + 1-bit codes). The per-vector
-compression is 32× (16 B vs 512 B), but you pay ≈ 1 MB overhead for the
-128×128 rotation matrix; honest full-index compression tracks down to
-8.7× at n=100k, larger as n grows.
+**Memory also improved**: the pure 1-bit index at n=100k is now **2.4 MB** vs
+Flat's **50.4 MB** = **21× compression** (up from 8.7× in v1). The SoA layout
+collapsed the 40 B per-entry overhead (tuple + BinaryCode headers) into 8 B
+(u32 id + f32 norm) plus the flat packed-codes slab.
+
+## What changed in the kernel
+
+1. **Struct-of-Arrays storage** for the hot path.
+   Was: `Vec<(usize, BinaryCode)>` where each `BinaryCode` heap-allocated
+   its own `Vec<u64>`. Pointer chase per candidate.
+   Now: three contiguous `Vec`s — `ids: Vec<u32>`, `norms: Vec<f32>`,
+   `packed: Vec<u64>` (n × n_words flat slab). No indirection per candidate.
+
+2. **cos-lookup table** replaces the `.cos()` call. Agreement ∈ [0, D] has
+   at most D+1 distinct values; precomputed `cos_lut[agreement]` is a single
+   indexed load vs a ~30 ns `cos` call. At D=128 the LUT is 516 B — fits
+   comfortably in L1.
+
+3. **Aligned-D fast path**: when `D % 64 == 0` the last-word mask is
+   `!0u64` and the AND gets skipped. At D=128 the inner loop is literally
+   `(!(a[0] ^ q[0])).count_ones() + (!(a[1] ^ q[1])).count_ones() +
+    lut[agree] · norms[i] · q_norm · 2 − q_sq − norms[i]²` per candidate.
+
+4. **Raw-pointer SoA walk** avoids the per-iteration bounds check on the
+   `packed` slab (the outer `for i in 0..n` still bounds-checks `ids` and
+   `norms`, which are shorter vectors and inlined nicely).
+
+Net effect: **2.5–3.1× end-to-end at n=100k** for the symmetric paths.
+Asymmetric is unchanged because its O(D) scalar signed-dot-product dominates;
+SIMD gather is the next lever (named follow-up).
 
 ## Recall × throughput × scale
 

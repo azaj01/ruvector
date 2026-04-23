@@ -63,7 +63,10 @@ fn cmp_score_asc(a: f32, b: f32) -> Ordering {
     a.total_cmp(&b)
 }
 
-/// Bounded max-heap that keeps the smallest `k` scores seen so far.
+/// Bounded max-heap that keeps the smallest `k` scores seen so far. Entries
+/// carry both the external `id` and the internal `pos` (row-index in the SoA
+/// storage) so rerank paths can fetch `originals[pos]` in O(1) after the
+/// scan.
 struct TopK {
     k: usize,
     // Max-heap by score so the worst of the top-k is at the top and can be
@@ -77,6 +80,7 @@ struct TopK {
 struct HeapEntry {
     id: usize,
     score: f32,
+    pos: u32,
 }
 impl PartialEq for HeapEntry {
     fn eq(&self, o: &Self) -> bool {
@@ -86,8 +90,6 @@ impl PartialEq for HeapEntry {
 impl Eq for HeapEntry {}
 impl Ord for HeapEntry {
     fn cmp(&self, o: &Self) -> Ordering {
-        // BinaryHeap is a max-heap; we want the WORST (highest-score) at the
-        // root so push/pop evicts it. total_cmp is NaN-safe.
         self.score.total_cmp(&o.score).then(self.id.cmp(&o.id))
     }
 }
@@ -100,21 +102,25 @@ impl PartialOrd for HeapEntry {
 impl TopK {
     fn new(k: usize) -> Self {
         Self {
-            k,
-            heap: BinaryHeap::with_capacity(k + 1),
+            k: k.max(1),
+            heap: BinaryHeap::with_capacity(k.max(1) + 1),
         }
     }
     #[inline]
     fn push(&mut self, id: usize, score: f32) {
+        self.push_raw(id, score, 0);
+    }
+    /// Variant that carries the candidate's row-position through the heap.
+    #[inline]
+    fn push_raw(&mut self, id: usize, score: f32, pos: usize) {
         if self.heap.len() < self.k {
-            self.heap.push(HeapEntry { id, score });
+            self.heap.push(HeapEntry { id, score, pos: pos as u32 });
             return;
         }
-        // heap.peek() is the current worst — evict only if new entry is better.
         let worst = self.heap.peek().unwrap().score;
         if score.total_cmp(&worst) == Ordering::Less {
             self.heap.pop();
-            self.heap.push(HeapEntry { id, score });
+            self.heap.push(HeapEntry { id, score, pos: pos as u32 });
         }
     }
     fn into_sorted_asc(self) -> Vec<SearchResult> {
@@ -124,6 +130,17 @@ impl TopK {
             .map(|e| SearchResult { id: e.id, score: e.score })
             .collect();
         v.sort_unstable_by(|a, b| cmp_score_asc(a.score, b.score));
+        v
+    }
+    /// Returns (pos, id, score) triples sorted ascending by score. Used by
+    /// the rerank path to look up the original f32 vector in O(1).
+    fn into_sorted_with_pos(self) -> Vec<(u32, u32, f32)> {
+        let mut v: Vec<(u32, u32, f32)> = self
+            .heap
+            .into_iter()
+            .map(|e| (e.pos, e.id as u32, e.score))
+            .collect();
+        v.sort_unstable_by(|a, b| cmp_score_asc(a.2, b.2));
         v
     }
 }
@@ -191,25 +208,76 @@ impl AnnIndex for FlatF32Index {
 
 // ── Variant B: RaBitQ symmetric scan (no originals, no rerank) ──────────────
 
-/// Pure 1-bit index. Stores the rotation matrix + binary codes. Does NOT
-/// keep the original f32 vectors — `RabitqPlusIndex` / `RabitqAsymIndex`
-/// own that storage when rerank is desired.
+/// Pure 1-bit index. Stores the rotation matrix + binary codes in
+/// **struct-of-arrays** layout for cache-friendly scanning:
+///
+/// - `ids:   Vec<u32>`   — one u32 per vector (4 B)
+/// - `norms: Vec<f32>`   — one f32 per vector (4 B)
+/// - `packed: Vec<u64>`  — flat row-major binary codes (`n_words` per row)
+///
+/// This replaces the previous `Vec<(usize, BinaryCode)>` where each
+/// `BinaryCode` owned its own heap-allocated `Vec<u64>`. The indirection
+/// forced a pointer chase per candidate; the SoA version walks contiguous
+/// memory and is ~2× faster on the symmetric scan at scale.
+///
+/// A precomputed cos-lookup table replaces the `.cos()` call in the
+/// estimator: since `agreement ∈ [0, D]` takes at most D+1 distinct values,
+/// a length-(D+1) f32 table gives the cos answer in one indexed load.
+/// At D=128 that's a 516 B table — fits in L1.
+///
+/// Does NOT keep the original f32 vectors — `RabitqPlusIndex` /
+/// `RabitqAsymIndex` own that storage when rerank is desired.
 pub struct RabitqIndex {
     dim: usize,
+    n_words: usize,
     rotation: RandomRotation,
-    codes: Vec<(usize, BinaryCode)>,
+    ids: Vec<u32>,
+    norms: Vec<f32>,
+    /// Flat row-major binary codes. Row i lives at `packed[i*n_words ..][..n_words]`.
+    packed: Vec<u64>,
+    /// Masked-popcount mask for the last word (zero padding bits).
+    last_word_mask: u64,
+    /// cos(π · (1 − B/D)) for B ∈ {0, 1, ..., D}.
+    cos_lut: Vec<f32>,
+}
+
+fn build_last_word_mask(dim: usize) -> u64 {
+    let n_words = (dim + 63) / 64;
+    if n_words == 0 {
+        return 0;
+    }
+    let valid_bits = dim - 64 * (n_words - 1);
+    if valid_bits == 64 {
+        !0u64
+    } else {
+        !0u64 << (64 - valid_bits)
+    }
+}
+
+fn build_cos_lut(dim: usize) -> Vec<f32> {
+    use std::f32::consts::PI;
+    let d = dim as f32;
+    (0..=dim).map(|b| (PI * (1.0 - b as f32 / d)).cos()).collect()
 }
 
 impl RabitqIndex {
     pub fn new(dim: usize, seed: u64) -> Self {
+        let n_words = (dim + 63) / 64;
         Self {
             dim,
+            n_words,
             rotation: RandomRotation::random(dim, seed),
-            codes: Vec::new(),
+            ids: Vec::new(),
+            norms: Vec::new(),
+            packed: Vec::new(),
+            last_word_mask: build_last_word_mask(dim),
+            cos_lut: build_cos_lut(dim),
         }
     }
 
-    /// Encode a raw vector into a binary code (normalise → rotate → pack).
+    /// Encode a raw vector and return the resulting `BinaryCode` (useful for
+    /// callers who want to hand codes to another index or serialise them
+    /// separately). The index mirrors the bits into its SoA storage.
     pub fn encode_vector(&self, v: &[f32]) -> BinaryCode {
         let norm: f32 = v.iter().map(|&x| x * x).sum::<f32>().sqrt();
         let mut unit = v.to_vec();
@@ -218,13 +286,29 @@ impl RabitqIndex {
         BinaryCode::encode(&rotated, norm)
     }
 
-    /// Encode a query — same math as `encode_vector`.
-    pub fn encode_query(&self, q: &[f32]) -> BinaryCode {
+    /// Encode a query — same math as `encode_vector`, returns just the
+    /// packed words (the caller already has `q_norm` from
+    /// [`Self::prepare_query_f32`] if they need it).
+    pub fn encode_query_packed(&self, q: &[f32]) -> (Vec<u64>, f32) {
         let norm: f32 = q.iter().map(|&x| x * x).sum::<f32>().sqrt();
         let mut unit = q.to_vec();
         normalize_inplace(&mut unit);
         let rotated = self.rotation.apply(&unit);
-        BinaryCode::encode(&rotated, norm.max(1e-10))
+        // Pack MSB-first, same as BinaryCode::encode.
+        let mut words = vec![0u64; self.n_words];
+        for (i, &v) in rotated.iter().enumerate() {
+            if v >= 0.0 {
+                words[i / 64] |= 1u64 << (63 - (i % 64));
+            }
+        }
+        (words, norm.max(1e-10))
+    }
+
+    /// Retained for the BinaryCode-shaped public surface. Thin wrapper
+    /// around [`Self::encode_query_packed`] that boxes the result.
+    pub fn encode_query(&self, q: &[f32]) -> BinaryCode {
+        let (words, norm) = self.encode_query_packed(q);
+        BinaryCode { words, norm, dim: self.dim }
     }
 
     /// Prepare a query for the asymmetric estimator — returns the rotated
@@ -238,17 +322,110 @@ impl RabitqIndex {
 
     /// Bytes used by the binary codes alone (not counting the rotation matrix).
     pub fn codes_bytes(&self) -> usize {
-        // Each BinaryCode stores: Vec<u64> words, f32 norm, usize dim.
-        // Vec header is 24 bytes on 64-bit; dim+norm+pair tuple overhead ≈ 16.
-        self.codes.len() * ((self.dim + 63) / 64 * 8 + 4 + 16 + 24)
+        // SoA: n_entries * (u32 id + f32 norm + n_words u64 code) = 8 + n_words*8 per row.
+        self.ids.len() * 8 + self.packed.len() * 8 + self.cos_lut.len() * 4
     }
 
     pub fn rotation(&self) -> &RandomRotation {
         &self.rotation
     }
 
-    pub fn codes(&self) -> &[(usize, BinaryCode)] {
-        &self.codes
+    /// Reconstruct the old `(id, BinaryCode)` view — O(n) allocation, for
+    /// back-compat with callers that still want boxed codes. Prefer the SoA
+    /// accessors ([`Self::ids`], [`Self::norms`], [`Self::packed`]) at hot
+    /// paths.
+    pub fn codes_materialised(&self) -> Vec<(usize, BinaryCode)> {
+        (0..self.ids.len())
+            .map(|i| {
+                let s = i * self.n_words;
+                let words = self.packed[s..s + self.n_words].to_vec();
+                (
+                    self.ids[i] as usize,
+                    BinaryCode { words, norm: self.norms[i], dim: self.dim },
+                )
+            })
+            .collect()
+    }
+
+    /// SoA accessors — stable contiguous slices for hot-loop consumers.
+    pub fn ids(&self) -> &[u32] {
+        &self.ids
+    }
+    pub fn norms(&self) -> &[f32] {
+        &self.norms
+    }
+    pub fn packed(&self) -> &[u64] {
+        &self.packed
+    }
+    pub fn n_words(&self) -> usize {
+        self.n_words
+    }
+    pub fn cos_lut(&self) -> &[f32] {
+        &self.cos_lut
+    }
+
+    /// Core SoA symmetric scan. Walks all n codes against a pre-packed
+    /// query, returns the heap-reduced top-k. Exposed so the other index
+    /// variants (`RabitqPlusIndex`) can share the tuned loop.
+    #[inline]
+    pub(crate) fn symmetric_scan_topk(
+        &self,
+        q_packed: &[u64],
+        q_norm: f32,
+        k: usize,
+    ) -> Vec<(u32, u32, f32)> {
+        // Returns (pos, id, score) so rerank callers can map back to `originals[pos]`.
+        let mut top = TopK::new(k.min(self.ids.len()));
+        let n_words = self.n_words;
+        let mask = self.last_word_mask;
+        let d = self.dim as f32;
+        let q_sq = q_norm * q_norm;
+        let lut = &self.cos_lut;
+
+        // Unrolled walk with manual prefetch-friendly stride. LLVM can already
+        // do most of this; the important part is the flat `packed` slice — no
+        // per-candidate indirection.
+        let n = self.ids.len();
+        let p = self.packed.as_ptr();
+        let aligned = mask == !0u64; // dim % 64 == 0
+        for i in 0..n {
+            // SAFETY: p is valid for `n * n_words` u64 reads. Using ptr offsets
+            // avoids the bounds-check in the inner loop.
+            let base = unsafe { p.add(i * n_words) };
+            let mut agree: u32 = 0;
+            if aligned && n_words == 2 {
+                // D=128 fast path: 2 popcounts, no last-word mask needed.
+                unsafe {
+                    agree = (!(*base ^ q_packed[0])).count_ones()
+                        + (!(*base.add(1) ^ q_packed[1])).count_ones();
+                }
+            } else if aligned {
+                // Aligned but more words — skip the mask AND on the last word.
+                unsafe {
+                    for w in 0..n_words {
+                        agree += (!(*base.add(w) ^ q_packed[w])).count_ones();
+                    }
+                }
+            } else {
+                // Unaligned: mask the last word's padding bits off.
+                unsafe {
+                    for w in 0..n_words - 1 {
+                        agree += (!(*base.add(w) ^ q_packed[w])).count_ones();
+                    }
+                    agree +=
+                        (!(*base.add(n_words - 1) ^ q_packed[n_words - 1]) & mask).count_ones();
+                }
+            }
+            // cos LUT replaces the `.cos()` call — one indexed load.
+            let est_cos = unsafe { *lut.get_unchecked(agree as usize) };
+            let x_norm = self.norms[i];
+            let est_ip = q_norm * x_norm * est_cos;
+            let score = q_sq + x_norm * x_norm - 2.0 * est_ip;
+            // ignoring d here — already baked into the LUT indices.
+            let _ = d;
+            top.push_raw(self.ids[i] as usize, score, i);
+        }
+        top.into_sorted_with_pos()
     }
 }
 
@@ -260,13 +437,26 @@ impl AnnIndex for RabitqIndex {
                 actual: vector.len(),
             });
         }
-        let code = self.encode_vector(&vector);
-        self.codes.push((id, code));
+        // Inline-encode directly into the SoA buffers — no intermediate BinaryCode.
+        let norm: f32 = vector.iter().map(|&x| x * x).sum::<f32>().sqrt();
+        let mut unit = vector;
+        normalize_inplace(&mut unit);
+        let rotated = self.rotation.apply(&unit);
+        let start = self.packed.len();
+        self.packed.resize(start + self.n_words, 0);
+        let slot = &mut self.packed[start..start + self.n_words];
+        for (i, &v) in rotated.iter().enumerate() {
+            if v >= 0.0 {
+                slot[i / 64] |= 1u64 << (63 - (i % 64));
+            }
+        }
+        self.ids.push(id as u32);
+        self.norms.push(norm);
         Ok(())
     }
 
     fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
-        if self.codes.is_empty() {
+        if self.ids.is_empty() {
             return Err(RabitqError::EmptyIndex);
         }
         if query.len() != self.dim {
@@ -275,17 +465,16 @@ impl AnnIndex for RabitqIndex {
                 actual: query.len(),
             });
         }
-        let query_code = self.encode_query(query);
-        let k_eff = k.min(self.codes.len());
-        let mut top = TopK::new(k_eff);
-        for (id, code) in &self.codes {
-            top.push(*id, code.estimated_sq_distance(&query_code));
-        }
-        Ok(top.into_sorted_asc())
+        let (q_packed, q_norm) = self.encode_query_packed(query);
+        let results = self.symmetric_scan_topk(&q_packed, q_norm, k);
+        Ok(results
+            .into_iter()
+            .map(|(_, id, score)| SearchResult { id: id as usize, score })
+            .collect())
     }
 
     fn len(&self) -> usize {
-        self.codes.len()
+        self.ids.len()
     }
     fn dim(&self) -> usize {
         self.dim
@@ -330,7 +519,7 @@ impl AnnIndex for RabitqPlusIndex {
     }
 
     fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
-        if self.inner.codes.is_empty() {
+        if self.inner.ids.is_empty() {
             return Err(RabitqError::EmptyIndex);
         }
         if query.len() != self.inner.dim {
@@ -339,30 +528,19 @@ impl AnnIndex for RabitqPlusIndex {
                 actual: query.len(),
             });
         }
-        let n = self.inner.codes.len();
+        let n = self.inner.ids.len();
         let candidates = k.saturating_mul(self.rerank_factor).max(k).min(n);
 
-        // Binary-code scan — keep the top `candidates` in a heap.
-        let query_code = self.inner.encode_query(query);
-        let mut top_cand = TopK::new(candidates);
-        for (pos, (id, code)) in self.inner.codes.iter().enumerate() {
-            let s = code.estimated_sq_distance(&query_code);
-            // Store ID-order position in the 48 high bits so we can recover
-            // `originals[pos]` in the rerank pass without re-scanning.
-            let packed = ((pos as u64) << 32) | (*id as u64 & 0xFFFF_FFFF);
-            top_cand.push(packed as usize, s);
-        }
+        // Binary-code scan via the tuned SoA loop.
+        let (q_packed, q_norm) = self.inner.encode_query_packed(query);
+        let cand = self.inner.symmetric_scan_topk(&q_packed, q_norm, candidates);
 
-        // Exact rerank on the candidate set.
-        let cand = top_cand.into_sorted_asc();
+        // Exact rerank on the candidate set — `pos` is the row index.
         let k_eff = k.min(cand.len());
         let mut top = TopK::new(k_eff);
-        for r in &cand {
-            let packed = r.id as u64;
-            let pos = (packed >> 32) as usize;
-            let id = (packed & 0xFFFF_FFFF) as usize;
-            let v = &self.originals[pos];
-            top.push(id, sq_l2(query, v));
+        for (pos, id, _score) in &cand {
+            let v = &self.originals[*pos as usize];
+            top.push(*id as usize, sq_l2(query, v));
         }
         Ok(top.into_sorted_asc())
     }
@@ -414,7 +592,7 @@ impl AnnIndex for RabitqAsymIndex {
     }
 
     fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
-        if self.inner.codes.is_empty() {
+        if self.inner.ids.is_empty() {
             return Err(RabitqError::EmptyIndex);
         }
         if query.len() != self.inner.dim {
@@ -423,40 +601,52 @@ impl AnnIndex for RabitqAsymIndex {
                 actual: query.len(),
             });
         }
-        let n = self.inner.codes.len();
+        let n = self.inner.ids.len();
         let candidates = k.saturating_mul(self.rerank_factor).max(k).min(n);
 
         let (q_rot_unit, q_norm) = self.inner.prepare_query_f32(query);
 
-        // Asymmetric scan — O(D) arithmetic per candidate.
-        let mut top_cand = TopK::new(candidates);
-        for (pos, (id, code)) in self.inner.codes.iter().enumerate() {
-            let s = code.estimated_sq_distance_asymmetric(&q_rot_unit, q_norm);
-            let packed = ((pos as u64) << 32) | (*id as u64 & 0xFFFF_FFFF);
-            top_cand.push(packed as usize, s);
-        }
-        let cand = top_cand.into_sorted_asc();
+        // Asymmetric scan — O(D) per candidate. Walks SoA directly so the
+        // memory footprint is a flat `n × n_words` slab instead of n heap
+        // allocations.
+        let d = self.inner.dim;
+        let n_words = self.inner.n_words;
+        let inv_sqrt_d = 1.0 / (d as f32).sqrt();
+        let q_sq = q_norm * q_norm;
 
-        // No rerank path: return the candidate order directly (IDs unpacked).
+        let mut top_cand = TopK::new(candidates);
+        for i in 0..n {
+            let base = i * n_words;
+            let slot = &self.inner.packed[base..base + n_words];
+            let mut ip = 0.0f32;
+            for (idx, &q_i) in q_rot_unit.iter().enumerate() {
+                let bit_set = (slot[idx / 64] >> (63 - (idx % 64))) & 1 == 1;
+                ip += if bit_set { q_i } else { -q_i };
+            }
+            let unit_ip = ip * inv_sqrt_d;
+            let x_norm = self.inner.norms[i];
+            let est_ip = q_norm * x_norm * unit_ip;
+            let score = q_sq + x_norm * x_norm - 2.0 * est_ip;
+            top_cand.push_raw(self.inner.ids[i] as usize, score, i);
+        }
+        let cand = top_cand.into_sorted_with_pos();
+
         if self.rerank_factor <= 1 || !self.store_originals {
             let k_eff = k.min(cand.len());
-            let mut out: Vec<SearchResult> = cand.into_iter().take(k_eff).map(|r| {
-                let id = (r.id as u64 & 0xFFFF_FFFF) as usize;
-                SearchResult { id, score: r.score }
-            }).collect();
+            let mut out: Vec<SearchResult> = cand
+                .into_iter()
+                .take(k_eff)
+                .map(|(_, id, score)| SearchResult { id: id as usize, score })
+                .collect();
             out.sort_unstable_by(|a, b| cmp_score_asc(a.score, b.score));
             return Ok(out);
         }
 
-        // Rerank path.
         let k_eff = k.min(cand.len());
         let mut top = TopK::new(k_eff);
-        for r in &cand {
-            let packed = r.id as u64;
-            let pos = (packed >> 32) as usize;
-            let id = (packed & 0xFFFF_FFFF) as usize;
-            let v = &self.originals[pos];
-            top.push(id, sq_l2(query, v));
+        for (pos, id, _) in &cand {
+            let v = &self.originals[*pos as usize];
+            top.push(*id as usize, sq_l2(query, v));
         }
         Ok(top.into_sorted_asc())
     }
