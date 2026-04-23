@@ -190,6 +190,82 @@ impl RuLakeBundle {
         self.lineage_id = Some(id.into());
         self
     }
+
+    /// Canonical filename for the on-disk bundle sidecar.
+    pub const SIDECAR_FILENAME: &'static str = "table.rulake.json";
+
+    /// Atomically write the bundle to `dir/table.rulake.json`.
+    ///
+    /// Writes to a sibling temp file then renames into place — so a
+    /// concurrent reader either sees the previous bundle or the new one,
+    /// never a truncated file. This matches the pattern the BQ UDF +
+    /// cache sidecar uses when the warehouse pushes a new generation.
+    pub fn write_to_dir(
+        &self,
+        dir: impl AsRef<std::path::Path>,
+    ) -> crate::Result<std::path::PathBuf> {
+        use std::io::Write;
+        let dir = dir.as_ref();
+        std::fs::create_dir_all(dir).map_err(|e| {
+            crate::RuLakeError::InvalidParameter(format!(
+                "bundle write: mkdir {}: {e}",
+                dir.display()
+            ))
+        })?;
+        let final_path = dir.join(Self::SIDECAR_FILENAME);
+        let tmp_path = dir.join(format!(
+            ".{}.tmp.{}",
+            Self::SIDECAR_FILENAME,
+            std::process::id()
+        ));
+        let body = self.to_json()?;
+        {
+            let mut f = std::fs::File::create(&tmp_path).map_err(|e| {
+                crate::RuLakeError::InvalidParameter(format!(
+                    "bundle write: create {}: {e}",
+                    tmp_path.display()
+                ))
+            })?;
+            f.write_all(body.as_bytes()).map_err(|e| {
+                crate::RuLakeError::InvalidParameter(format!("bundle write: write: {e}"))
+            })?;
+            f.sync_all().map_err(|e| {
+                crate::RuLakeError::InvalidParameter(format!("bundle write: fsync: {e}"))
+            })?;
+        }
+        std::fs::rename(&tmp_path, &final_path).map_err(|e| {
+            crate::RuLakeError::InvalidParameter(format!(
+                "bundle write: rename {} → {}: {e}",
+                tmp_path.display(),
+                final_path.display()
+            ))
+        })?;
+        Ok(final_path)
+    }
+
+    /// Read `dir/table.rulake.json` and verify its witness.
+    ///
+    /// Returns an error when the sidecar is missing, malformed, carries a
+    /// newer `format_version`, or when the on-disk witness does not match
+    /// the recomputed value. The witness check is the anchor that makes
+    /// a bundle trustworthy across the cache + UDF boundary.
+    pub fn read_from_dir(dir: impl AsRef<std::path::Path>) -> crate::Result<Self> {
+        let path = dir.as_ref().join(Self::SIDECAR_FILENAME);
+        let body = std::fs::read_to_string(&path).map_err(|e| {
+            crate::RuLakeError::InvalidParameter(format!(
+                "bundle read: open {}: {e}",
+                path.display()
+            ))
+        })?;
+        let bundle = Self::from_json(&body)?;
+        if !bundle.verify_witness() {
+            return Err(crate::RuLakeError::InvalidParameter(format!(
+                "bundle read: witness mismatch at {}",
+                path.display()
+            )));
+        }
+        Ok(bundle)
+    }
 }
 
 /// SHAKE-256(32) over a stable concatenation of the bundle fields.
@@ -299,5 +375,83 @@ mod tests {
         s = s.replace("\"format_version\": 1", "\"format_version\": 99");
         let err = RuLakeBundle::from_json(&s).unwrap_err();
         assert!(matches!(err, crate::RuLakeError::InvalidParameter(_)));
+    }
+
+    fn tempdir(tag: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        p.push(format!(
+            "rulake-bundle-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn fs_roundtrip_writes_and_reads_canonical_sidecar() {
+        let dir = tempdir("roundtrip");
+        let orig = RuLakeBundle::new("gs://bucket/x.parquet", 128, 42, 20, Generation::Num(7))
+            .with_pii_policy("pii://policies/default")
+            .with_lineage_id("ol://jobs/ingest-42");
+
+        let written = orig.write_to_dir(&dir).unwrap();
+        assert_eq!(written.file_name().unwrap(), RuLakeBundle::SIDECAR_FILENAME);
+
+        let loaded = RuLakeBundle::read_from_dir(&dir).unwrap();
+        assert_eq!(loaded.rvf_witness, orig.rvf_witness);
+        assert_eq!(loaded.data_ref, orig.data_ref);
+        assert_eq!(loaded.pii_policy.as_deref(), Some("pii://policies/default"));
+        assert_eq!(loaded.lineage_id.as_deref(), Some("ol://jobs/ingest-42"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fs_read_rejects_tampered_sidecar() {
+        let dir = tempdir("tamper");
+        let bundle = RuLakeBundle::new("x", 128, 1, 20, Generation::Num(1));
+        bundle.write_to_dir(&dir).unwrap();
+
+        // Tamper: overwrite dim on disk without recomputing witness.
+        let path = dir.join(RuLakeBundle::SIDECAR_FILENAME);
+        let body = std::fs::read_to_string(&path).unwrap();
+        let tampered = body.replace("\"dim\": 128", "\"dim\": 256");
+        std::fs::write(&path, tampered).unwrap();
+
+        let err = RuLakeBundle::read_from_dir(&dir).unwrap_err();
+        match err {
+            crate::RuLakeError::InvalidParameter(msg) => {
+                assert!(msg.contains("witness"), "unexpected err: {msg}");
+            }
+            other => panic!("expected InvalidParameter, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fs_write_is_atomic_under_crash_simulation() {
+        // Simulate a crash between tmp-create and rename by writing a
+        // canonical sidecar first, then attempting a second write that
+        // we interrupt by leaving a leftover `.tmp.*` file in place.
+        // Readers should still see the valid sidecar.
+        let dir = tempdir("atomic");
+        let v1 = RuLakeBundle::new("x", 128, 1, 20, Generation::Num(1));
+        v1.write_to_dir(&dir).unwrap();
+
+        // Drop a leftover tmp file; this mimics a crashed writer.
+        let leftover = dir.join(format!(
+            ".{}.tmp.{}",
+            RuLakeBundle::SIDECAR_FILENAME,
+            u32::MAX
+        ));
+        std::fs::write(&leftover, b"garbage-not-json").unwrap();
+
+        // Reader still observes v1 untouched.
+        let loaded = RuLakeBundle::read_from_dir(&dir).unwrap();
+        assert_eq!(loaded.rvf_witness, v1.rvf_witness);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

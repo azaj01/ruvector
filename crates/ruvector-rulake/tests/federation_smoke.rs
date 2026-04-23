@@ -443,7 +443,7 @@ fn lru_eviction_caps_entry_count_when_pointers_dropped() {
     let b = Arc::new(LocalBackend::new("b"));
     let c = Arc::new(LocalBackend::new("c"));
     for (i, back) in [&a, &b, &c].iter().enumerate() {
-        back.put_collection("c", d, vec![i as u64], vec![vec![(i as f32); d]])
+        back.put_collection("c", d, vec![i as u64], vec![vec![i as f32; d]])
             .unwrap();
     }
     let lake = RuLake::new(5, 42).with_max_cache_entries(2);
