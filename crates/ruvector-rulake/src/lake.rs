@@ -421,19 +421,13 @@ impl RuLake {
 
         // Step 4 — pos_to_id from the loaded index's internal ids.
         //
-        // Every primed entry is built with `idx.add(pos, v)` where
-        // `pos ∈ 0..n` — the internal id IS the position. The
-        // `save_index` / `load_index` round-trip preserves that, so
-        // the loaded index's internal ids form an identity sequence
-        // `[0, 1, ..., n-1]`. The cache's `pos_to_id[pos]` mirrors
-        // this by construction; the external u64 ids are collapsed
-        // to their positional form when they round-trip through the
-        // u32-wide rabitq persist format. Callers whose external ids
-        // are not dense 0..n should NOT rely on warm_from_dir to
-        // preserve them — that's a known limitation of the persist
-        // format and documented alongside it.
-        let n = idx.len();
-        let pos_to_id: Vec<u64> = (0..n as u64).collect();
+        // Wave-6 close: RabitqPlusIndex::ids_u64() now widens the
+        // preserved u32 ids to u64 and returns them in position order,
+        // so non-dense external ids (e.g. `[7, 42, 99, 2000]`) round-
+        // trip faithfully through the persist format. The previous
+        // `(0..n)` workaround is gone.
+        let pos_to_id: Vec<u64> = idx.ids_u64();
+        let n = pos_to_id.len();
 
         // Step 5 — install into the cache via the interned path.
         self.cache.install_prebuilt_interned(

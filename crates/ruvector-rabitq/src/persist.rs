@@ -283,6 +283,17 @@ mod tests {
         assert_eq!(loaded.dim(), d);
         assert_eq!(loaded.rerank_factor(), rerank_factor);
 
+        // External ids must survive the roundtrip byte-for-byte — the
+        // loader re-applies the persisted ids rather than flattening to
+        // `0..n`. This is the post-condition `ruvector-rulake`'s
+        // `warm_from_dir` now relies on to reconstruct `pos_to_id`
+        // without the dense-id workaround.
+        assert_eq!(
+            original.external_ids(),
+            loaded.external_ids(),
+            "external ids must be preserved through persist roundtrip",
+        );
+
         // Run 10 queries and assert ids + scores match exactly.
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed.wrapping_add(7));
         let k = 5;
@@ -301,6 +312,90 @@ mod tests {
                     "query {q_idx}: score bits differ ({} vs {})",
                     ra.score,
                     rb.score
+                );
+            }
+        }
+    }
+
+    /// Non-dense external ids must survive `save_index` → `load_index`
+    /// exactly. The dense `(0, 1, …, n-1)` ids in the main roundtrip
+    /// test would mask a regression where the loader flattens ids to
+    /// row positions (they happen to coincide at `0..n`). This test
+    /// uses the arithmetic progression `13·i + 7` so no id equals its
+    /// row index — any loader that stores `pos` instead of the
+    /// persisted id is caught immediately.
+    #[test]
+    fn persist_preserves_non_dense_ids() {
+        let d = 24;
+        let n = 50;
+        let seed = 20_260_423_u64;
+        let rerank_factor = 4;
+
+        // External ids: 7, 20, 33, 46, … — non-dense, strictly
+        // monotonic but unequal to `0..n`. Largest is 13·49 + 7 = 644
+        // so still fits comfortably in u32.
+        let external_ids: Vec<usize> = (0..n).map(|i| i * 13 + 7).collect();
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let items: Vec<(usize, Vec<f32>)> = external_ids
+            .iter()
+            .map(|&id| {
+                let v: Vec<f32> = (0..d).map(|_| rng.gen::<f32>() * 2.0 - 1.0).collect();
+                (id, v)
+            })
+            .collect();
+
+        let mut original = RabitqPlusIndex::new(d, seed, rerank_factor);
+        for (id, v) in &items {
+            original.add(*id, v.clone()).unwrap();
+        }
+
+        // Pre-condition: the source index already carries the non-dense
+        // ids via `add`. If this fails the bug is in `add`/`RabitqIndex`,
+        // not persist.
+        let expected_u32: Vec<u32> = external_ids.iter().map(|&id| id as u32).collect();
+        assert_eq!(
+            original.external_ids(),
+            expected_u32.as_slice(),
+            "source index dropped non-dense ids before persist",
+        );
+
+        // Save → load.
+        let mut buf: Vec<u8> = Vec::new();
+        save_index(&original, seed, &items, &mut buf).unwrap();
+        let mut cursor = std::io::Cursor::new(&buf);
+        let loaded = load_index(&mut cursor).unwrap();
+
+        // The contract this test defends: ids survive byte-for-byte.
+        assert_eq!(
+            loaded.external_ids(),
+            expected_u32.as_slice(),
+            "load_index flattened non-dense ids — regression of the \
+             rulake warm_from_dir limitation",
+        );
+        // And the widening accessor must agree.
+        let expected_u64: Vec<u64> = external_ids.iter().map(|&id| id as u64).collect();
+        assert_eq!(loaded.ids_u64(), expected_u64);
+
+        // Search results must quote the persisted ids, not row indices.
+        // Running 5 queries keyed off the same seed guarantees the
+        // check covers a spread of candidate sets.
+        let mut qrng = rand::rngs::StdRng::seed_from_u64(seed.wrapping_add(42));
+        let k = 5;
+        for q_idx in 0..5 {
+            let q: Vec<f32> = (0..d).map(|_| qrng.gen::<f32>() * 2.0 - 1.0).collect();
+            let a = original.search(&q, k).unwrap();
+            let b = loaded.search(&q, k).unwrap();
+            assert_eq!(a.len(), b.len(), "query {q_idx}: result count");
+            for (ra, rb) in a.iter().zip(b.iter()) {
+                assert_eq!(ra.id, rb.id, "query {q_idx}: id mismatch after load");
+                // Every result id must be one of the persisted
+                // external ids — never a row index from `0..n`.
+                assert!(
+                    external_ids.contains(&ra.id),
+                    "query {q_idx}: returned id {} is not in the \
+                     persisted id set (smells like a row index)",
+                    ra.id,
                 );
             }
         }

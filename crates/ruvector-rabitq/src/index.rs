@@ -554,6 +554,26 @@ impl RabitqPlusIndex {
         &self.originals_flat[pos * dim..(pos + 1) * dim]
     }
 
+    /// SoA accessor — external u32 ids in insertion order. Mirrors
+    /// [`RabitqIndex::ids`] at the outer layer so callers holding a
+    /// `RabitqPlusIndex` don't have to reach through an inner reference.
+    ///
+    /// Required by `ruvector-rulake`'s `warm_from_dir` path: after
+    /// [`crate::persist::load_index`] the loader now re-applies the
+    /// persisted external ids (not the row positions), and this accessor
+    /// is the read-back surface used to reconstruct `pos_to_id` without
+    /// the earlier `0..n` flattening assumption.
+    pub fn external_ids(&self) -> &[u32] {
+        self.inner.ids()
+    }
+
+    /// Widening accessor — returns external ids as `u64`, matching the
+    /// cache-layer u64 external-id contract in `ruvector-rulake`. Cheap
+    /// clone (one allocation, no scan).
+    pub fn ids_u64(&self) -> Vec<u64> {
+        self.inner.ids().iter().map(|&id| id as u64).collect()
+    }
+
     /// Export every stored vector as `(pos, row_vec)` pairs, suitable for
     /// feeding directly into [`Self::from_vectors_parallel_with_rotation`]
     /// or `persist::save_index(.., &items, ..)`.
