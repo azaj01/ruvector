@@ -18,7 +18,7 @@ use std::time::Instant;
 use rand::SeedableRng;
 use rand_distr::{Distribution, Normal, Uniform};
 
-use ruvector_rabitq::{AnnIndex, RabitqPlusIndex};
+use ruvector_rabitq::{AnnIndex, RabitqPlusIndex, RandomRotationKind};
 use ruvector_rulake::{cache::Consistency, LocalBackend, RuLake, SearchResult};
 
 fn clustered(n: usize, d: usize, n_clusters: usize, seed: u64) -> Vec<Vec<f32>> {
@@ -49,6 +49,31 @@ fn measure_direct(
     // returns (build_ms, qps)
     let t = Instant::now();
     let mut idx = RabitqPlusIndex::new(d, seed, rerank);
+    for (i, v) in data.iter().enumerate() {
+        idx.add(i, v.clone()).unwrap();
+    }
+    let build_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    let t = Instant::now();
+    for q in queries {
+        let _ = idx.search(q, 10).unwrap();
+    }
+    let qps = queries.len() as f64 / t.elapsed().as_secs_f64();
+    (build_ms, qps)
+}
+
+/// Same shape as [`measure_direct`] but uses a randomised-Hadamard
+/// rotation instead of the default Haar matrix (ADR-158 feature).
+fn measure_direct_hadamard(
+    d: usize,
+    rerank: usize,
+    seed: u64,
+    data: &[Vec<f32>],
+    queries: &[Vec<f32>],
+) -> (f64, f64) {
+    let t = Instant::now();
+    let mut idx =
+        RabitqPlusIndex::new_with_rotation(d, seed, rerank, RandomRotationKind::HadamardSigned);
     for (i, v) in data.iter().enumerate() {
         idx.add(i, v.clone()).unwrap();
     }
@@ -241,8 +266,16 @@ fn main() {
 
         let (direct_build, direct_qps) = measure_direct(d, rerank, seed, &data, &queries);
         println!(
-            "  direct RaBitQ+           build={:>8.1} ms   qps={:>8.0}",
+            "  direct RaBitQ+ (Haar)    build={:>8.1} ms   qps={:>8.0}",
             direct_build, direct_qps
+        );
+
+        let (hada_build, hada_qps) = measure_direct_hadamard(d, rerank, seed, &data, &queries);
+        println!(
+            "  direct RaBitQ+ (Hadamard) build={:>8.1} ms   qps={:>8.0}   build_speedup={:.2}×",
+            hada_build,
+            hada_qps,
+            direct_build / hada_build.max(0.001)
         );
 
         let (lake_prime, lake_qps) =

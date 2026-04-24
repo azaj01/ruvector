@@ -56,4 +56,4 @@ pub use index::{
 };
 pub use kernel::{CpuKernel, KernelCaps, ScanRequest, ScanResponse, VectorKernel};
 pub use quantize::{pack_bits, unpack_bits, BinaryCode};
-pub use rotation::RandomRotation;
+pub use rotation::{RandomRotation, RandomRotationKind};
