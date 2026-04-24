@@ -420,6 +420,63 @@ impl VectorCache {
             .collect())
     }
 
+    /// Batch form of [`search_cached_with_rerank`]: all `queries` hit
+    /// the same cached entry, so we take the mutex once and look up
+    /// the witness + pos_to_id mapping once. This is the surface a
+    /// GPU / SIMD kernel needs to amortize per-query setup; today's
+    /// CPU impl already saves the repeated mutex acquisition and
+    /// eliminates per-query `ensure_fresh` calls from the caller.
+    ///
+    /// Preserves the query order: `result[i]` is the top-k for
+    /// `queries[i]`.
+    pub fn search_cached_batch(
+        &self,
+        key: &CacheKey,
+        queries: &[Vec<f32>],
+        k: usize,
+        rerank_factor_override: Option<usize>,
+    ) -> crate::Result<Vec<Vec<(u64, f32)>>> {
+        let mut inner = self.inner.lock().unwrap();
+        let witness = inner
+            .pointers
+            .get(key)
+            .ok_or_else(|| crate::RuLakeError::UnknownCollection {
+                backend: key.0.clone(),
+                collection: key.1.clone(),
+            })?
+            .clone();
+        let entry = inner.entries.get_mut(&witness).ok_or_else(|| {
+            crate::RuLakeError::UnknownCollection {
+                backend: key.0.clone(),
+                collection: key.1.clone(),
+            }
+        })?;
+        let dim = entry.dim;
+        for q in queries {
+            if q.len() != dim {
+                return Err(crate::RuLakeError::DimensionMismatch {
+                    expected: dim,
+                    actual: q.len(),
+                });
+            }
+        }
+        entry.last_used = Instant::now();
+        let mut raw: Vec<Vec<ruvector_rabitq::SearchResult>> = Vec::with_capacity(queries.len());
+        for q in queries {
+            let r = match rerank_factor_override {
+                None => entry.index.search(q, k)?,
+                Some(rf) => entry.index.search_with_rerank(q, k, rf)?,
+            };
+            raw.push(r);
+        }
+        let pos_to_id = entry.pos_to_id.clone();
+        drop(inner);
+        Ok(raw
+            .into_iter()
+            .map(|v| v.into_iter().map(|r| (pos_to_id[r.id], r.score)).collect())
+            .collect())
+    }
+
     pub fn touch(&self, key: &CacheKey) {
         let mut inner = self.inner.lock().unwrap();
         inner.last_checked.insert(key.clone(), Instant::now());

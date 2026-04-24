@@ -298,6 +298,42 @@ impl RuLake {
             .collect())
     }
 
+    /// Batched single-collection search. All `queries` run against the
+    /// same `(backend, collection)` key, so coherence is checked once
+    /// and the cache mutex is held for a single round of N scans
+    /// instead of N separate acquires. Preserves query order:
+    /// `result[i]` is the top-k for `queries[i]`.
+    ///
+    /// This is also the plug-point for the future `VectorKernel` trait
+    /// (ADR-157): GPU / SIMD kernels cross over CPU only at batch
+    /// sizes above their `min_batch`, so a per-query API would never
+    /// let dispatch pick them. The batch API makes the dispatch
+    /// decision tractable.
+    pub fn search_batch(
+        &self,
+        backend: &str,
+        collection: &str,
+        queries: &[Vec<f32>],
+        k: usize,
+    ) -> Result<Vec<Vec<SearchResult>>> {
+        let key: CacheKey = (backend.to_string(), collection.to_string());
+        self.ensure_fresh(&key)?;
+        let raw = self.cache.search_cached_batch(&key, queries, k, None)?;
+        Ok(raw
+            .into_iter()
+            .map(|v| {
+                v.into_iter()
+                    .map(|(id, score)| SearchResult {
+                        backend: backend.to_string(),
+                        collection: collection.to_string(),
+                        id,
+                        score,
+                    })
+                    .collect()
+            })
+            .collect())
+    }
+
     /// Coherence check: ask the backend for its current bundle and
     /// compare its witness with whatever the cache currently points at.
     ///

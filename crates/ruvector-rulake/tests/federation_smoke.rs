@@ -763,6 +763,75 @@ fn refresh_from_bundle_dir_reports_all_three_states() {
 }
 
 #[test]
+fn search_batch_matches_per_query_results() {
+    // search_batch must return the same top-k as calling search_one
+    // for each query individually. Byte-exact required: same seed,
+    // same rerank factor, same cache entry — the only difference is
+    // the API.
+    let d = 32;
+    let n = 500;
+    let seed = 61;
+    let data = clustered(n, d, 8, seed);
+    let backend = Arc::new(LocalBackend::new("batch"));
+    backend
+        .put_collection("c", d, (0..n as u64).collect(), data)
+        .unwrap();
+    let lake = RuLake::new(20, seed).with_consistency(Consistency::Eventual { ttl_ms: 60_000 });
+    lake.register_backend(backend).unwrap();
+
+    let queries = clustered(16, d, 8, seed ^ 0xa5a5);
+
+    // Prime.
+    lake.search_one("batch", "c", &queries[0], 5).unwrap();
+
+    let single: Vec<Vec<_>> = queries
+        .iter()
+        .map(|q| lake.search_one("batch", "c", q, 5).unwrap())
+        .collect();
+    let batch = lake.search_batch("batch", "c", &queries, 5).unwrap();
+    assert_eq!(single.len(), batch.len());
+    for (i, (a, b)) in single.iter().zip(batch.iter()).enumerate() {
+        assert_eq!(
+            a, b,
+            "batch and single diverged at query {i}: single={:?} batch={:?}",
+            a, b
+        );
+    }
+}
+
+#[test]
+fn search_batch_acquires_cache_lock_once() {
+    // A single search_batch(N=32) should register as one coherence-skip
+    // hit (Eventual) or one miss+prime on first call, NOT N individual
+    // hits. This is how operators can see the lock-amortization working.
+    let d = 16;
+    let backend = Arc::new(LocalBackend::new("amort"));
+    backend
+        .put_collection("c", d, (0..50).collect(), vec![vec![0.0; d]; 50])
+        .unwrap();
+    let lake = RuLake::new(20, 42).with_consistency(Consistency::Eventual { ttl_ms: 60_000 });
+    lake.register_backend(backend).unwrap();
+
+    // Prime.
+    lake.search_one("amort", "c", &vec![0.0f32; d], 1).unwrap();
+    let before = lake.cache_stats();
+
+    let queries = vec![vec![0.0f32; d]; 32];
+    let _ = lake.search_batch("amort", "c", &queries, 1).unwrap();
+    let after = lake.cache_stats();
+
+    // Before this change, per-query ensure_fresh bumped hits by N=32.
+    // The batch path bumps it by exactly 1.
+    let delta_hits = after.hits - before.hits;
+    assert_eq!(
+        delta_hits, 1,
+        "batch of 32 should register as 1 coherence check, got {delta_hits}"
+    );
+    // No new primes.
+    assert_eq!(after.primes, before.primes);
+}
+
+#[test]
 fn frozen_consistency_never_rechecks_after_prime() {
     // Frozen asserts immutability. After the first miss-prime, backend
     // generation bumps must NOT trigger a re-prime or invalidation.
