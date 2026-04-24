@@ -147,6 +147,33 @@ AND keeps hot-path throughput at ~parity with the single-shard
 baseline. Federation is genuinely free for reachability/memory sharding
 on same-box setups; on network-backed setups it's a clear win.
 
+### Randomized Hadamard rotation (ADR-158, opt-in)
+
+`RabitqPlusIndex::new_with_rotation(.., RandomRotationKind::HadamardSigned)`
+replaces the default D×D Haar matrix (`O(D²)` per query, `4·D² B`
+storage) with a D₁·FWHT·D₂·FWHT·D₃ pattern (`O(D log D)` per query,
+`12·D B` storage). Recall is preserved; the RaBitQ error bound only
+requires "close to Haar-uniform" (TurboQuant 2025 §3.2) and HD-HD-HD
+meets that bar.
+
+At D=128 (clustered Gaussian, rerank×20, single-thread):
+
+| n       | Haar build | Hadamard build | build speedup | Haar QPS | Hadamard QPS |
+|--------:|-----------:|---------------:|--------------:|---------:|-------------:|
+|   5 000 |    22.4 ms |        7.2 ms  |       3.09×   |   18,894 |      20,881  |
+|  50 000 |   211.6 ms |       72.7 ms  |       2.91×   |    6,065 |       5,854  |
+| 100 000 |   421.1 ms |      142.9 ms  |       2.95×   |    3,675 |       3,638  |
+
+Rotation storage: **66,052 B Haar → 2,052 B Hadamard at D=128
+(32.2× reduction)**. Per-query QPS is within ±3% because the scan +
+rerank steps dominate over the rotation cost at n ≥ 50k. The win is
+on the cold-start / prime path — **3× build-time speedup** stacks
+with the existing `parallel prime` (rayon) optimization to give
+millisecond-scale primes even at n=100k.
+
+Recall@10 vs exact L2² brute force on clustered D=128 n=500: **1.000
+for both Haar and Hadamard** (test `hadamard_recall_at_10_within_5pct_of_haar`).
+
 ## Acceptance checks (M1)
 
 The smoke tests under `tests/federation_smoke.rs` gate M1 from
